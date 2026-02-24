@@ -408,7 +408,7 @@ async def add_source_text(notebook_id: str, text: str, title: str, ctx: Context[
     client = app.client
 
     await ctx.info(f"Adding text source: {title}")
-    source = await client.sources.add_text(notebook_id, text, title=title)
+    source = await client.sources.add_text(notebook_id, title, text)
 
     return {"id": source.id, "title": source.title, "success": True}
 
@@ -505,7 +505,7 @@ async def add_source_youtube(
         return {"error": "Authentication failed. Please check the logs."}
 
     await ctx.info(f"Adding YouTube source: {url}")
-    source = await app.client.sources.add_youtube(notebook_id, url)
+    source = await app.client.sources.add_url(notebook_id, url)
     return {"id": source.id, "title": source.title, "success": True}
 
 
@@ -820,7 +820,7 @@ async def share_notebook(
     if not await _ensure_authenticated(app, ctx):
         return {"error": "Authentication failed. Please check the logs."}
 
-    result = await app.client.notebooks.share(notebook_id, {"public": public})
+    result = await app.client.notebooks.share(notebook_id, public)
     return {"success": True, "result": result}
 
 
@@ -849,8 +849,8 @@ async def remove_notebook_from_recent(
 async def ask_question(
     notebook_id: str,
     question: str,
-    source_ids: list[str] | None = None,
-    conversation_id: str | None = None,
+    source_ids: str = "",
+    conversation_id: str = "",
     ctx: Context[ServerSession, AppContext] = None,
 ) -> dict:
     """Ask a question to a NotebookLM notebook and get an AI-generated answer.
@@ -858,7 +858,7 @@ async def ask_question(
     Args:
         notebook_id: ID of the notebook to query
         question: The question to ask
-        source_ids: Restrict the query to specific source IDs (optional)
+        source_ids: Comma-separated source IDs to restrict the query (optional)
         conversation_id: Continue an existing conversation thread (optional)
 
     Returns:
@@ -871,9 +871,15 @@ async def ask_question(
     await ctx.info(f"Querying notebook: {notebook_id}")
     await ctx.report_progress(0.5, 1.0, "Generating answer...")
 
+    parsed_source_ids = (
+        [s.strip() for s in source_ids.split(",") if s.strip()]
+        if source_ids
+        else None
+    )
+
     kwargs = {}
-    if source_ids:
-        kwargs["source_ids"] = source_ids
+    if parsed_source_ids:
+        kwargs["source_ids"] = parsed_source_ids
     if conversation_id:
         kwargs["conversation_id"] = conversation_id
 
@@ -978,7 +984,7 @@ async def generate_audio_overview(
     await ctx.report_progress(0.2, 1.0, "Starting generation...")
 
     status = await client.artifacts.generate_audio(
-        notebook_id, instructions=instructions, format=audio_format, length=length
+        notebook_id, instructions=instructions, audio_format=audio_format, audio_length=length
     )
 
     await ctx.report_progress(0.5, 1.0, "Waiting for generation to complete...")
@@ -1152,7 +1158,7 @@ async def generate_report(
         return {"error": "Authentication failed. Please check the logs."}
 
     await ctx.info("Generating report...")
-    status = await app.client.artifacts.generate_report(notebook_id, instructions=instructions)
+    status = await app.client.artifacts.generate_report(notebook_id, custom_prompt=instructions)
     await app.client.artifacts.wait_for_completion(notebook_id, status.task_id)
     return {"task_id": status.task_id, "status": "completed"}
 
@@ -1375,14 +1381,12 @@ async def download_data_table(
 @mcp.tool()
 async def generate_mind_map(
     notebook_id: str,
-    instructions: str = "",
     ctx: Context[ServerSession, AppContext] = None,
 ) -> dict:
     """Generate a mind map from notebook sources.
 
     Args:
         notebook_id: ID of the notebook
-        instructions: Custom instructions for generation
 
     Returns:
         Dictionary with task status
@@ -1392,7 +1396,7 @@ async def generate_mind_map(
         return {"error": "Authentication failed. Please check the logs."}
 
     await ctx.info("Generating mind map...")
-    status = await app.client.artifacts.generate_mind_map(notebook_id, instructions=instructions)
+    status = await app.client.artifacts.generate_mind_map(notebook_id)
     await app.client.artifacts.wait_for_completion(notebook_id, status.task_id)
     return {"task_id": status.task_id, "status": "completed"}
 
@@ -1559,7 +1563,7 @@ async def export_artifact(
         return {"error": "Authentication failed. Please check the logs."}
 
     await ctx.info(f"Exporting artifact to: {output_path}")
-    data = await app.client.artifacts.export(notebook_id, artifact_id, export_format or None)
+    data = await app.client.artifacts.export(notebook_id, artifact_id, export_type=export_format or None)
     Path(output_path).write_bytes(data if isinstance(data, bytes) else str(data).encode("utf-8"))
     return {"output_path": output_path, "success": True}
 
@@ -1664,7 +1668,7 @@ async def poll_research(
 async def import_research_sources(
     notebook_id: str,
     task_id: str,
-    sources: list[str],
+    sources: str,
     ctx: Context[ServerSession, AppContext] = None,
 ) -> dict:
     """Import selected sources from a completed research task into the notebook.
@@ -1672,17 +1676,27 @@ async def import_research_sources(
     Args:
         notebook_id: ID of the notebook
         task_id: ID of the research task
-        sources: List of source identifiers to import
+        sources: JSON array of source objects, each with 'url' and 'title' keys.
+                 Example: [{"url": "https://...", "title": "Article"}]
 
     Returns:
         Dictionary with import results
     """
+    import json as _json
+
     app = ctx.request_context.lifespan_context
     if not await _ensure_authenticated(app, ctx):
         return {"error": "Authentication failed. Please check the logs."}
 
-    await ctx.info(f"Importing {len(sources)} research sources...")
-    result = await app.client.research.import_sources(notebook_id, task_id, sources)
+    try:
+        parsed = _json.loads(sources)
+    except _json.JSONDecodeError as exc:
+        return {"error": f"Invalid JSON for sources: {exc}"}
+    if not isinstance(parsed, list):
+        return {"error": "sources must be a JSON array"}
+
+    await ctx.info(f"Importing {len(parsed)} research sources...")
+    result = await app.client.research.import_sources(notebook_id, task_id, parsed)
     return {"success": True, "result": result}
 
 
@@ -1771,13 +1785,16 @@ async def update_note(
     title: str = "",
     ctx: Context[ServerSession, AppContext] = None,
 ) -> dict:
-    """Update an existing note's content and/or title.
+    """Update an existing note's content and title.
+
+    Both content and title are required by the API. If either is omitted,
+    the current value is fetched automatically to avoid overwriting.
 
     Args:
         notebook_id: ID of the notebook
         note_id: ID of the note to update
-        content: New content for the note (optional)
-        title: New title for the note (optional)
+        content: New content for the note
+        title: New title for the note
 
     Returns:
         Dictionary with the updated note details
@@ -1786,14 +1803,15 @@ async def update_note(
     if not await _ensure_authenticated(app, ctx):
         return {"error": "Authentication failed. Please check the logs."}
 
-    kwargs = {}
-    if content:
-        kwargs["content"] = content
-    if title:
-        kwargs["title"] = title
+    if not content or not title:
+        existing = await app.client.notes.get(notebook_id, note_id)
+        if not content:
+            content = getattr(existing, "content", "")
+        if not title:
+            title = getattr(existing, "title", "")
 
-    note = await app.client.notes.update(notebook_id, note_id, **kwargs)
-    return {"id": note.id, "title": note.title, "success": True}
+    await app.client.notes.update(notebook_id, note_id, content, title)
+    return {"note_id": note_id, "title": title, "success": True}
 
 
 @mcp.tool()
@@ -2269,7 +2287,7 @@ async def pdf_to_png(
 
 @mcp.tool()
 async def png_to_pdf(
-    image_paths: list[str] | None = None,
+    image_paths: str = "",
     image_directory: str = "",
     output_path: str = "",
 ) -> dict:
@@ -2281,7 +2299,7 @@ async def png_to_pdf(
     preserves correct order automatically).
 
     Args:
-        image_paths: Explicit ordered list of image file paths
+        image_paths: Comma-separated image file paths, or a JSON array of paths
         image_directory: Directory of PNG files to combine (alternative to image_paths)
         output_path: Path for the output PDF. Defaults to <directory>/combined.pdf
 
@@ -2289,9 +2307,17 @@ async def png_to_pdf(
         Dictionary with the output PDF path and page count
     """
     import fitz  # pymupdf
+    import json as _json
 
+    resolved_paths = []
     if image_paths:
-        files = [Path(p) for p in image_paths]
+        try:
+            resolved_paths = _json.loads(image_paths)
+        except _json.JSONDecodeError:
+            resolved_paths = [p.strip() for p in image_paths.split(",") if p.strip()]
+
+    if resolved_paths:
+        files = [Path(p) for p in resolved_paths]
     elif image_directory:
         src = Path(image_directory)
         if not src.is_dir():

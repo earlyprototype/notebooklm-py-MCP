@@ -183,7 +183,7 @@ class TestAddSourceText:
         result = await add_source_text("nb-1", "Some content", "Title", mock_ctx)
         assert result["success"] is True
         assert result["id"] == "src-text"
-        mock_client.sources.add_text.assert_awaited_once_with("nb-1", "Some content", title="Title")
+        mock_client.sources.add_text.assert_awaited_once_with("nb-1", "Title", "Some content")
 
 
 class TestGetSource:
@@ -212,8 +212,8 @@ class TestAddSourceYoutube:
     async def test_adds_youtube_source(self, mock_ctx, mock_client):
         result = await add_source_youtube("nb-1", "https://youtube.com/watch?v=abc", mock_ctx)
         assert result["success"] is True
-        assert result["id"] == "src-yt"
-        mock_client.sources.add_youtube.assert_awaited_once()
+        assert result["id"] == "src-new"
+        mock_client.sources.add_url.assert_awaited_once_with("nb-1", "https://youtube.com/watch?v=abc")
 
 
 class TestAddSourceFile:
@@ -293,7 +293,7 @@ class TestAskQuestion:
         mock_client.chat.ask.assert_awaited_once()
 
     async def test_with_source_ids(self, mock_ctx, mock_client):
-        result = await ask_question("nb-1", "Summary?", source_ids=["src-1"], ctx=mock_ctx)
+        result = await ask_question("nb-1", "Summary?", source_ids="src-1", ctx=mock_ctx)
         assert "answer" in result
         mock_client.chat.ask.assert_awaited()
 
@@ -528,9 +528,19 @@ class TestPollResearch:
 
 class TestImportResearchSources:
     async def test_imports_sources(self, mock_ctx, mock_client):
-        result = await import_research_sources("nb-1", "research-1", ["src-a", "src-b"], ctx=mock_ctx)
+        import json
+        sources_json = json.dumps([{"url": "https://example.com", "title": "Example"}])
+        result = await import_research_sources("nb-1", "research-1", sources_json, ctx=mock_ctx)
         assert result["success"] is True
         mock_client.research.import_sources.assert_awaited_once()
+
+    async def test_rejects_invalid_json(self, mock_ctx, mock_client):
+        result = await import_research_sources("nb-1", "research-1", "not-json", ctx=mock_ctx)
+        assert "error" in result
+
+    async def test_rejects_non_array_json(self, mock_ctx, mock_client):
+        result = await import_research_sources("nb-1", "research-1", '{"key": "val"}', ctx=mock_ctx)
+        assert "error" in result
 
 
 # ============================================================================
@@ -673,3 +683,44 @@ class TestGetAccountInfo:
         result = await get_account_info(mock_ctx)
         assert result["current_account"] == "test"
         assert "available_profiles" in result
+
+
+# ============================================================================
+# SCHEMA VALIDATION -- prevent complex types from breaking MCP clients
+# ============================================================================
+
+
+class TestToolSchemas:
+    """Verify all registered tool parameters use MCP-client-safe types."""
+
+    def test_no_complex_parameter_types(self):
+        import json
+        from mcp.server.fastmcp import FastMCP
+
+        from notebooklm_mcp_server import mcp
+
+        scalar_types = {"string", "integer", "number", "boolean"}
+        safe_compound = {"string", "integer", "number", "boolean", "null"}
+        violations = []
+
+        for name, tool in mcp._tool_manager._tools.items():
+            schema = tool.parameters
+            props = schema.get("properties", {})
+            for param_name, param_schema in props.items():
+                ptype = param_schema.get("type")
+                if ptype in scalar_types:
+                    continue
+                if "anyOf" in param_schema and all(
+                    opt.get("type") in safe_compound for opt in param_schema["anyOf"]
+                ):
+                    continue
+                if ptype == "null":
+                    continue
+                violations.append(
+                    f"{name}.{param_name}: {json.dumps(param_schema)}"
+                )
+
+        assert not violations, (
+            "Complex parameter types found in MCP tool schemas:\n"
+            + "\n".join(violations)
+        )
