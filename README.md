@@ -1,5 +1,7 @@
 # notebooklm-py-mcp
 
+> **Looking to use NotebookLM with your AI agent?** Use [**notebooklm-py-diet-mcp**](https://github.com/earlyprototype/notebooklm-py-diet-mcp) -- a streamlined version with 14 workflow-oriented tools designed for practical use. This repository exposes the full SDK surface (72 tools) and is intended for development, testing, and advanced use cases.
+
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that exposes [Google NotebookLM](https://notebooklm.google.com/) capabilities as tools for AI agents in [Cursor](https://cursor.com/), [Claude Code](https://docs.claude.com/en/docs/claude-code), and other MCP-compatible clients.
 
 Built on top of [**notebooklm-py**](https://github.com/teng-lin/notebooklm-py) by [Teng Lin](https://github.com/teng-lin) -- the unofficial Python API for Google NotebookLM.
