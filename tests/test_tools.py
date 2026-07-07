@@ -529,6 +529,7 @@ class TestPollResearch:
 class TestImportResearchSources:
     async def test_imports_sources(self, mock_ctx, mock_client):
         import json
+
         sources_json = json.dumps([{"url": "https://example.com", "title": "Example"}])
         result = await import_research_sources("nb-1", "research-1", sources_json, ctx=mock_ctx)
         assert result["success"] is True
@@ -695,7 +696,6 @@ class TestToolSchemas:
 
     def test_no_complex_parameter_types(self):
         import json
-        from mcp.server.fastmcp import FastMCP
 
         from notebooklm_mcp_server import mcp
 
@@ -710,17 +710,10 @@ class TestToolSchemas:
                 ptype = param_schema.get("type")
                 if ptype in scalar_types:
                     continue
-                if "anyOf" in param_schema and all(
-                    opt.get("type") in safe_compound for opt in param_schema["anyOf"]
-                ):
+                if "anyOf" in param_schema and all(opt.get("type") in safe_compound for opt in param_schema["anyOf"]):
                     continue
                 if ptype == "null":
                     continue
-                violations.append(
-                    f"{name}.{param_name}: {json.dumps(param_schema)}"
-                )
+                violations.append(f"{name}.{param_name}: {json.dumps(param_schema)}")
 
-        assert not violations, (
-            "Complex parameter types found in MCP tool schemas:\n"
-            + "\n".join(violations)
-        )
+        assert not violations, "Complex parameter types found in MCP tool schemas:\n" + "\n".join(violations)

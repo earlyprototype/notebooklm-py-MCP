@@ -1,6 +1,6 @@
 [build-system]
 requires = ["hatchling"]
-build-backend = "hatchling.backends"
+build-backend = "hatchling.build"
 
 [project]
 name = "notebooklm-py-mcp"
@@ -9,7 +9,7 @@ description = "MCP server exposing Google NotebookLM as tools for AI agents"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
-authors = []
+authors = [{ name = "Thom Conaty", email = "thomconatydesign@gmail.com" }]
 keywords = ["mcp", "notebooklm", "ai", "cursor", "claude"]
 classifiers = [
     "Development Status :: 4 - Beta",

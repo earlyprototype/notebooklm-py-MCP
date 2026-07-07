@@ -871,11 +871,7 @@ async def ask_question(
     await ctx.info(f"Querying notebook: {notebook_id}")
     await ctx.report_progress(0.5, 1.0, "Generating answer...")
 
-    parsed_source_ids = (
-        [s.strip() for s in source_ids.split(",") if s.strip()]
-        if source_ids
-        else None
-    )
+    parsed_source_ids = [s.strip() for s in source_ids.split(",") if s.strip()] if source_ids else None
 
     kwargs = {}
     if parsed_source_ids:
@@ -2306,8 +2302,9 @@ async def png_to_pdf(
     Returns:
         Dictionary with the output PDF path and page count
     """
-    import fitz  # pymupdf
     import json as _json
+
+    import fitz  # pymupdf
 
     resolved_paths = []
     if image_paths:
