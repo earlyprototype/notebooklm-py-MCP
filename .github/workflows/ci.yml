@@ -28,6 +28,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install "notebooklm-py[browser]>=0.3.2" "mcp[cli]>=1.0.0"
-      - run: pip install pytest pytest-asyncio pytest-cov
+      # Install via the packaged path so a broken build backend fails CI,
+      # instead of installing dependencies directly and masking it.
+      - run: pip install -e ".[dev]"
       - run: pytest tests/ -v --tb=short --cov=notebooklm_mcp_server --cov-report=term-missing
