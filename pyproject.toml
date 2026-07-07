@@ -59,3 +59,8 @@ testpaths = ["tests"]
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
+
+[tool.hatch.build.targets.wheel]
+# Single-module project: the module name does not match the project name,
+# so hatchling needs to be told explicitly what ships in the wheel.
+only-include = ["notebooklm_mcp_server.py"]
