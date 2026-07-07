@@ -335,6 +335,7 @@ notebooklm-py-mcp/
     test_helpers.py            # Unit tests for helper functions
     test_tools.py              # Mock-based tool tests
     test_lifespan.py           # Server startup scenario tests
+    test_sdk_contracts.py      # Contract tests against the real SDK signatures
   docs/
     setup.md                  # Detailed setup guide
 ```
@@ -348,6 +349,8 @@ pip install -e ".[dev]"
 pytest
 ```
 
+Tool tests are fully mocked, so the suite needs no Google account. Alongside them, `tests/test_sdk_contracts.py` uses `inspect.signature` against the real notebooklm-py SDK to verify every argument this server passes actually exists in the installed SDK -- catching renamed or removed parameters that mocks would silently accept.
+
 ### Linting
 
 ```bash
@@ -360,6 +363,8 @@ ruff format .
 The `INSTRUCTIONS.md` file is loaded by MCP clients alongside the server and provides the LLM with usage context -- workflow patterns, error handling guidance, and tool conventions. Place it next to `notebooklm_mcp_server.py` or in the MCP server metadata directory used by your client.
 
 ## Acknowledgements
+
+Built by [Thom Conaty](https://github.com/earlyprototype).
 
 This project would not exist without [**notebooklm-py**](https://github.com/teng-lin/notebooklm-py) by [Teng Lin](https://github.com/teng-lin) and contributors. It provides the complete Python API for Google NotebookLM that this MCP server wraps.
 
