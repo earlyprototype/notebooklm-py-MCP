@@ -34,11 +34,7 @@ def _get_positional_params(cls, method_name: str) -> list[str]:
         inspect.Parameter.POSITIONAL_ONLY,
         inspect.Parameter.POSITIONAL_OR_KEYWORD,
     }
-    return [
-        name
-        for name, param in sig.parameters.items()
-        if name != "self" and param.kind in positional_kinds
-    ]
+    return [name for name, param in sig.parameters.items() if name != "self" and param.kind in positional_kinds]
 
 
 def _accepts_kwarg(cls, method_name: str, kwarg: str) -> bool:
@@ -47,9 +43,7 @@ def _accepts_kwarg(cls, method_name: str, kwarg: str) -> bool:
     sig = inspect.signature(method)
     if kwarg in sig.parameters:
         return True
-    return any(
-        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-    )
+    return any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
 
 
 # ============================================================================
@@ -86,7 +80,7 @@ class TestNotebooksContract:
         assert params[1] == "public"
         sig = inspect.signature(NotebooksAPI.share)
         public_param = sig.parameters["public"]
-        assert public_param.default is True or public_param.annotation == bool
+        assert public_param.default is True or public_param.annotation is bool
 
     def test_remove_from_recent_signature(self):
         params = _get_positional_params(NotebooksAPI, "remove_from_recent")
@@ -209,10 +203,14 @@ class TestArtifactGenerationContract:
     def test_generate_video_accepts_instructions(self):
         assert _accepts_kwarg(ArtifactsAPI, "generate_video", "instructions")
 
-    def test_generate_mind_map_does_not_accept_instructions(self):
-        """Mind map generation has no instructions parameter."""
-        sig = inspect.signature(ArtifactsAPI.generate_mind_map)
-        assert "instructions" not in sig.parameters
+    def test_generate_mind_map_first_positional_is_notebook_id(self):
+        """We call generate_mind_map(notebook_id) positionally.
+
+        Note: notebooklm-py 0.7.x added an ``instructions`` kwarg here;
+        an earlier version of this test asserted its absence.
+        """
+        params = _get_positional_params(ArtifactsAPI, "generate_mind_map")
+        assert params[0] == "notebook_id"
 
 
 # ============================================================================
