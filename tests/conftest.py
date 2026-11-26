@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from notebooklm.types import GenerationStatus
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -30,11 +31,6 @@ class FakeSource:
 class FakeAnswer:
     answer: str
     citations: list
-
-
-@dataclass
-class FakeTaskStatus:
-    task_id: str
 
 
 @dataclass
@@ -114,15 +110,22 @@ def make_mock_client():
         "slide_deck",
         "infographic",
         "data_table",
-        "mind_map",
         "quiz",
     ):
         setattr(
-            client.artifacts, f"generate_{artifact}", AsyncMock(return_value=FakeTaskStatus(task_id=f"task-{artifact}"))
+            client.artifacts,
+            f"generate_{artifact}",
+            AsyncMock(return_value=GenerationStatus(task_id="task-1", status="pending")),
         )
         setattr(client.artifacts, f"download_{artifact}", AsyncMock(return_value=None))
 
-    client.artifacts.wait_for_completion = AsyncMock(return_value=None)
+    client.artifacts.generate_mind_map = AsyncMock(
+        return_value=SimpleNamespace(mind_map={"name": "Map"}, note_id="note-map")
+    )
+    client.artifacts.download_mind_map = AsyncMock(return_value=None)
+    client.artifacts.wait_for_completion = AsyncMock(
+        return_value=GenerationStatus(task_id="task-1", status="completed")
+    )
     client.artifacts.list = AsyncMock(return_value=[])
     client.artifacts.get = AsyncMock(return_value=SimpleNamespace(id="art-1", title="Artifact"))
     client.artifacts.delete = AsyncMock(return_value=None)
@@ -195,8 +198,9 @@ def app_context(mock_client):
 
 
 @pytest.fixture
-def mock_ctx(app_context):
+def mock_ctx(app_context, monkeypatch):
     """Provide a mocked MCP Context wired to app_context."""
+    monkeypatch.setattr("notebooklm_mcp_server._run_login", AsyncMock(return_value=False))
     ctx = MagicMock()
     ctx.request_context.lifespan_context = app_context
     ctx.info = AsyncMock()

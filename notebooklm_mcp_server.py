@@ -30,6 +30,7 @@ from pathlib import Path
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.session import ServerSession
 from notebooklm import NotebookLMClient
+from notebooklm.types import GenerationStatus
 
 ACTIVE_PROFILE_PATH = Path.home() / ".notebooklm-active.json"
 
@@ -952,6 +953,22 @@ async def get_chat_history(
     }
 
 
+async def _generation_result(client: NotebookLMClient, notebook_id: str, status: GenerationStatus) -> dict:
+    """Wait for active generation tasks and return the SDK outcome."""
+    task_id = status.task_id
+    if task_id and status.status not in ("completed", "failed", "removed"):
+        status = await client.artifacts.wait_for_completion(notebook_id, task_id)
+
+    result = {"task_id": task_id, "status": status.status}
+    if not task_id:
+        result.update(status="failed", error=status.error or "Generation returned no task ID.")
+    elif not status.is_complete:
+        result["error"] = status.error or f"Generation ended with status '{status.status}'."
+    if status.error_code:
+        result["error_code"] = status.error_code
+    return result
+
+
 @mcp.tool()
 async def generate_audio_overview(
     notebook_id: str,
@@ -983,12 +1000,11 @@ async def generate_audio_overview(
         notebook_id, instructions=instructions, audio_format=audio_format, audio_length=length
     )
 
-    await ctx.report_progress(0.5, 1.0, "Waiting for generation to complete...")
-    await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-
-    await ctx.report_progress(1.0, 1.0, "Audio generation complete")
-
-    return {"task_id": status.task_id, "status": "completed", "format": audio_format, "length": length}
+    await ctx.report_progress(0.5, 1.0, "Checking generation status...")
+    result = await _generation_result(client, notebook_id, status)
+    if result["status"] == "completed":
+        await ctx.report_progress(1.0, 1.0, "Audio generation complete")
+    return {**result, "format": audio_format, "length": length}
 
 
 @mcp.tool()
@@ -1044,12 +1060,11 @@ async def generate_quiz(
 
     status = await client.artifacts.generate_quiz(notebook_id, quantity=quantity, difficulty=difficulty)
 
-    await ctx.report_progress(0.7, 1.0, "Waiting for completion...")
-    await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-
-    await ctx.report_progress(1.0, 1.0, "Quiz generation complete")
-
-    return {"task_id": status.task_id, "status": "completed", "quantity": quantity, "difficulty": difficulty}
+    await ctx.report_progress(0.7, 1.0, "Checking generation status...")
+    result = await _generation_result(client, notebook_id, status)
+    if result["status"] == "completed":
+        await ctx.report_progress(1.0, 1.0, "Quiz generation complete")
+    return {**result, "quantity": quantity, "difficulty": difficulty}
 
 
 @mcp.tool()
@@ -1106,9 +1121,9 @@ async def generate_video(
         return {"error": "Authentication failed. Please check the logs."}
 
     await ctx.info("Generating video...")
-    status = await app.client.artifacts.generate_video(notebook_id, instructions=instructions)
-    await app.client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return {"task_id": status.task_id, "status": "completed"}
+    client = app.client
+    status = await client.artifacts.generate_video(notebook_id, instructions=instructions)
+    return await _generation_result(client, notebook_id, status)
 
 
 @mcp.tool()
@@ -1154,9 +1169,9 @@ async def generate_report(
         return {"error": "Authentication failed. Please check the logs."}
 
     await ctx.info("Generating report...")
-    status = await app.client.artifacts.generate_report(notebook_id, custom_prompt=instructions)
-    await app.client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return {"task_id": status.task_id, "status": "completed"}
+    client = app.client
+    status = await client.artifacts.generate_report(notebook_id, custom_prompt=instructions)
+    return await _generation_result(client, notebook_id, status)
 
 
 @mcp.tool()
@@ -1202,9 +1217,9 @@ async def generate_flashcards(
         return {"error": "Authentication failed. Please check the logs."}
 
     await ctx.info("Generating flashcards...")
-    status = await app.client.artifacts.generate_flashcards(notebook_id, instructions=instructions)
-    await app.client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return {"task_id": status.task_id, "status": "completed"}
+    client = app.client
+    status = await client.artifacts.generate_flashcards(notebook_id, instructions=instructions)
+    return await _generation_result(client, notebook_id, status)
 
 
 @mcp.tool()
@@ -1250,9 +1265,9 @@ async def generate_slide_deck(
         return {"error": "Authentication failed. Please check the logs."}
 
     await ctx.info("Generating slide deck...")
-    status = await app.client.artifacts.generate_slide_deck(notebook_id, instructions=instructions)
-    await app.client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return {"task_id": status.task_id, "status": "completed"}
+    client = app.client
+    status = await client.artifacts.generate_slide_deck(notebook_id, instructions=instructions)
+    return await _generation_result(client, notebook_id, status)
 
 
 @mcp.tool()
@@ -1298,9 +1313,9 @@ async def generate_infographic(
         return {"error": "Authentication failed. Please check the logs."}
 
     await ctx.info("Generating infographic...")
-    status = await app.client.artifacts.generate_infographic(notebook_id, instructions=instructions)
-    await app.client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return {"task_id": status.task_id, "status": "completed"}
+    client = app.client
+    status = await client.artifacts.generate_infographic(notebook_id, instructions=instructions)
+    return await _generation_result(client, notebook_id, status)
 
 
 @mcp.tool()
@@ -1346,9 +1361,9 @@ async def generate_data_table(
         return {"error": "Authentication failed. Please check the logs."}
 
     await ctx.info("Generating data table...")
-    status = await app.client.artifacts.generate_data_table(notebook_id, instructions=instructions)
-    await app.client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return {"task_id": status.task_id, "status": "completed"}
+    client = app.client
+    status = await client.artifacts.generate_data_table(notebook_id, instructions=instructions)
+    return await _generation_result(client, notebook_id, status)
 
 
 @mcp.tool()
@@ -1392,9 +1407,16 @@ async def generate_mind_map(
         return {"error": "Authentication failed. Please check the logs."}
 
     await ctx.info("Generating mind map...")
-    status = await app.client.artifacts.generate_mind_map(notebook_id)
-    await app.client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return {"task_id": status.task_id, "status": "completed"}
+    result = await app.client.artifacts.generate_mind_map(notebook_id)
+    if isinstance(result, dict):
+        mind_map, note_id = result.get("mind_map"), result.get("note_id")
+    else:
+        mind_map, note_id = result.mind_map, result.note_id
+    if mind_map is None:
+        return {"task_id": note_id, "status": "failed", "error": "Generation returned no mind map."}
+    if not note_id:
+        return {"task_id": note_id, "status": "failed", "error": "The generated mind map was not saved."}
+    return {"task_id": note_id, "status": "completed"}
 
 
 @mcp.tool()
