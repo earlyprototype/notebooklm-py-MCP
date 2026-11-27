@@ -9,7 +9,7 @@ import json
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import fitz
 import pytest
@@ -627,7 +627,7 @@ class TestExportArtifact:
         result = await export_artifact("nb-1", "art-2", str(path), extension, ctx=mock_ctx)
         assert result == {"success": True, "output_path": str(path)}
         artifacts.get.assert_awaited_once_with("nb-1", "art-2")
-        getattr(artifacts, f"download_{kind}").assert_awaited_once_with("nb-1", str(path), artifact_id="art-2")
+        getattr(artifacts, f"download_{kind}").assert_awaited_once_with("nb-1", ANY, artifact_id="art-2")
         if extension == "pdf":
             with fitz.open(path) as doc:
                 assert doc.is_pdf and doc.page_count == 1
@@ -637,6 +637,33 @@ class TestExportArtifact:
                 assert list(csv.reader(stream)) == [["id", "title"], ["art-2", "Row, one"]]
         else:
             assert json.loads(path.read_text(encoding="utf-8")) == {"id": "art-2"}
+
+    async def test_replaces_pdf_only_after_download_succeeds(self, mock_ctx, mock_client, tmp_path):
+        def download(notebook_id, output_path, *, artifact_id):
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            if artifact_id == "interrupted":
+                Path(output_path).write_bytes(b"incomplete PDF")
+                raise OSError("Download interrupted")
+            # SDK 0.3.2 requires a new destination for its final rename on Windows.
+            with open(output_path, "xb") as stream, fitz.open() as doc:
+                doc.new_page().insert_text((50, 50), artifact_id)
+                stream.write(doc.tobytes())
+
+        mock_client.artifacts.get.return_value = SimpleNamespace(kind="slide_deck")
+        mock_client.artifacts.download_slide_deck.side_effect = download
+        path = tmp_path / "exports" / "slides.pdf"
+        for artifact_id in ("original", "replacement"):
+            result = await export_artifact("nb-1", artifact_id, str(path), ctx=mock_ctx)
+            assert result == {"success": True, "output_path": str(path)}
+            with fitz.open(path) as doc:
+                assert doc.is_pdf and doc.page_count == 1
+                assert doc[0].get_text().strip() == artifact_id
+
+        previous = path.read_bytes()
+        with pytest.raises(OSError, match="Download interrupted"):
+            await export_artifact("nb-1", "interrupted", str(path), ctx=mock_ctx)
+        assert path.read_bytes() == previous
+        assert list(path.parent.iterdir()) == [path]
 
     @pytest.mark.parametrize("fmt", ["xlsx", "pdf", ""])
     async def test_unsupported_format(self, mock_ctx, mock_client, tmp_path, fmt):

@@ -26,6 +26,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Literal
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -1572,7 +1573,8 @@ async def export_artifact(
     Returns:
         Dictionary with export status
     """
-    fmt = export_format.strip().lower() or Path(output_path).suffix[1:].lower()
+    destination = Path(output_path)
+    fmt = export_format.strip().lower() or destination.suffix[1:].lower()
     if fmt and fmt not in ("pdf", "csv", "json"):
         return {"error": f"Unsupported local export format: {fmt}"}
 
@@ -1597,7 +1599,12 @@ async def export_artifact(
     native_format, download = downloads[artifact.kind]
     if fmt and fmt != native_format:
         return {"error": f"This artifact supports {native_format} export, requested {fmt}"}
-    await download(notebook_id, output_path, artifact_id=artifact_id)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # SDK 0.3.2 finishes PDF downloads with rename, which needs a fresh path on Windows.
+    with TemporaryDirectory(dir=destination.parent) as directory:
+        staged_path = Path(directory) / f"artifact.{native_format}"
+        await download(notebook_id, str(staged_path), artifact_id=artifact_id)
+        os.replace(staged_path, destination)
     return {"output_path": output_path, "success": True}
 
 

@@ -302,7 +302,7 @@ Once configured, you can interact with NotebookLM directly from your AI agent:
 
 **Generate content:**
 > "Generate a podcast overview for the Project notebook"
-> "Generate a report from the Strategy notebook and download it as PDF"
+> "Generate a report from the Strategy notebook and download it as Markdown"
 > "Create flashcards from the Training notebook"
 
 **Research:**
