@@ -23,8 +23,8 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
-    "notebooklm-py[browser]>=0.3.2",
-    "mcp[cli]>=1.0.0",
+    "notebooklm-py[browser]>=0.3.2,<0.8",
+    "mcp[cli]>=1.0.0,<2",
     "pymupdf>=1.24.0",
 ]
 

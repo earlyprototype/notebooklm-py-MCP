@@ -6,8 +6,8 @@ with Cursor, Claude Code, and other MCP-compatible LLM clients.
 Built on top of notebooklm-py: https://github.com/teng-lin/notebooklm-py
 
 Requires:
-    - notebooklm-py >= 0.3.2
-    - mcp[cli] >= 1.0.0
+    - notebooklm-py >= 0.3.2, < 0.8
+    - mcp[cli] >= 1.0.0, < 2
     - A valid NotebookLM authentication session (run: notebooklm login)
 
 Account selection:

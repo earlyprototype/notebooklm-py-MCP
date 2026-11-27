@@ -14,6 +14,7 @@ from notebooklm_mcp_server import (
     generate_audio_overview,
     generate_infographic,
     generate_quiz,
+    generate_report,
     generate_slide_deck,
     generate_video,
 )
@@ -81,6 +82,16 @@ async def test_quiz_request_options(options, codes, mock_ctx, artifact_rpc):
     method, params = artifact_rpc.call_args.args
     assert method == RPCMethod.CREATE_ARTIFACT
     assert params[2][9][1][7] == codes
+
+
+async def test_report_returns_error_from_failed_poll(mock_ctx, artifact_rpc):
+    pending = ["report-1", "Report", ArtifactTypeCode.REPORT, None, ArtifactStatus.PENDING]
+    failed = ["report-1", "Report", ArtifactTypeCode.REPORT, "No sources available", ArtifactStatus.FAILED]
+    artifact_rpc.side_effect = [[pending], [[failed]]]
+
+    result = await generate_report("nb-1", ctx=mock_ctx)
+
+    assert result == {"task_id": "report-1", "status": "failed", "error": "No sources available"}
 
 
 @pytest.mark.parametrize(
