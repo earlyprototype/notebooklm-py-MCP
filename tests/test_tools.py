@@ -4,6 +4,12 @@ Each test verifies that the tool calls the correct SDK method with the
 expected arguments and returns a well-structured result dict.
 """
 
+from types import SimpleNamespace
+
+import pytest
+from notebooklm import types as sdk_types
+from notebooklm.types import GenerationStatus
+
 from notebooklm_mcp_server import (
     add_shared_user,
     add_source_drive,
@@ -322,7 +328,7 @@ class TestGetChatHistory:
 class TestGenerateAudioOverview:
     async def test_generates_audio(self, mock_ctx, mock_client):
         result = await generate_audio_overview("nb-1", "", "deep-dive", "medium", mock_ctx)
-        assert result["status"] == "completed"
+        assert result == {"task_id": "task-1", "status": "completed", "format": "deep-dive", "length": "medium"}
         mock_client.artifacts.generate_audio.assert_awaited_once()
         mock_client.artifacts.wait_for_completion.assert_awaited()
 
@@ -340,11 +346,40 @@ class TestGenerateReport:
         assert result["status"] == "completed"
         mock_client.artifacts.generate_report.assert_awaited_once()
 
+    async def test_already_completed(self, mock_ctx, mock_client):
+        mock_client.artifacts.generate_report.return_value = GenerationStatus(task_id="report-1", status="completed")
+        result = await generate_report("nb-1", ctx=mock_ctx)
+        assert result == {"task_id": "report-1", "status": "completed"}
+        mock_client.artifacts.wait_for_completion.assert_not_awaited()
+
+    @pytest.mark.parametrize("task_id", ["", " \t", ["report-1"]], ids=["empty", "whitespace", "list"])
+    @pytest.mark.parametrize("status", ["pending", "completed"])
+    async def test_invalid_task_id(self, task_id, status, mock_ctx, mock_client):
+        mock_client.artifacts.generate_report.return_value = GenerationStatus(task_id=task_id, status=status)
+        result = await generate_report("nb-1", ctx=mock_ctx)
+        assert result["status"] == "failed"
+        assert "task ID" in result["error"]
+        mock_client.artifacts.wait_for_completion.assert_not_awaited()
+
+    async def test_removed_during_generation(self, mock_ctx, mock_client):
+        mock_client.artifacts.wait_for_completion.return_value = GenerationStatus(task_id="task-1", status="removed")
+        result = await generate_report("nb-1", ctx=mock_ctx)
+        assert result["status"] == "removed"
+        assert "removed" in result["error"]
+
+    async def test_submission_failure_with_task_id(self, mock_ctx, mock_client):
+        mock_client.artifacts.generate_report.return_value = GenerationStatus(
+            task_id="report-1", status="failed", error="No sources available"
+        )
+        result = await generate_report("nb-1", ctx=mock_ctx)
+        assert result == {"task_id": "report-1", "status": "failed", "error": "No sources available"}
+        mock_client.artifacts.wait_for_completion.assert_not_awaited()
+
 
 class TestGenerateQuiz:
     async def test_generates_quiz(self, mock_ctx, mock_client):
         result = await generate_quiz("nb-1", "standard", "medium", mock_ctx)
-        assert result["status"] == "completed"
+        assert result == {"task_id": "task-1", "status": "completed", "quantity": "standard", "difficulty": "medium"}
         mock_client.artifacts.generate_quiz.assert_awaited_once()
 
 
@@ -376,11 +411,112 @@ class TestGenerateDataTable:
         mock_client.artifacts.generate_data_table.assert_awaited_once()
 
 
+@pytest.mark.parametrize(
+    ("tool", "sdk_method"),
+    [
+        (generate_audio_overview, "generate_audio"),
+        (generate_quiz, "generate_quiz"),
+        (generate_video, "generate_video"),
+        (generate_report, "generate_report"),
+        (generate_flashcards, "generate_flashcards"),
+        (generate_slide_deck, "generate_slide_deck"),
+        (generate_infographic, "generate_infographic"),
+        (generate_data_table, "generate_data_table"),
+    ],
+)
+@pytest.mark.parametrize("stage", ["submission", "completion"])
+async def test_artifact_generation_surfaces_sdk_failure(tool, sdk_method, stage, mock_ctx, mock_client):
+    artifacts = mock_client.artifacts
+    task_id = "" if stage == "submission" else "task-1"
+    failure = GenerationStatus(
+        task_id=task_id, status="failed", error="Quota exceeded", error_code="USER_DISPLAYABLE_ERROR"
+    )
+    method = getattr(artifacts, sdk_method) if stage == "submission" else artifacts.wait_for_completion
+    method.return_value = failure
+
+    result = await tool("nb-1", ctx=mock_ctx)
+
+    assert result["status"] == "failed"
+    assert result["task_id"] == task_id
+    assert result["error"] == "Quota exceeded"
+    assert result["error_code"] == "USER_DISPLAYABLE_ERROR"
+    if stage == "submission":
+        artifacts.wait_for_completion.assert_not_awaited()
+    else:
+        artifacts.wait_for_completion.assert_awaited_once_with("nb-1", task_id)
+    assert all(call.args[0] != 1.0 for call in mock_ctx.report_progress.await_args_list)
+
+
 class TestGenerateMindMap:
+    @pytest.mark.parametrize("result_type", [dict, getattr(sdk_types, "MindMapResult", SimpleNamespace)])
+    @pytest.mark.parametrize("list_key", ["children", "nodes"])
+    async def test_saved_map_reports_sdk_failure(self, result_type, list_key, mock_ctx, mock_client):
+        content = {"status": "failed", "error": "Quota exceeded", list_key: []}
+        mock_client.artifacts.generate_mind_map.return_value = result_type(mind_map=content, note_id="saved-note")
+
+        result = await generate_mind_map("nb-1", ctx=mock_ctx)
+
+        assert result == {"task_id": "saved-note", "status": "failed", "error": "Quota exceeded"}
+        mock_client.artifacts.wait_for_completion.assert_not_awaited()
+
+    async def test_saved_map_failed_without_sdk_reason(self, mock_ctx, mock_client):
+        mock_client.artifacts.generate_mind_map.return_value = {
+            "mind_map": {"status": "failed", "children": []},
+            "note_id": "saved-note",
+        }
+
+        result = await generate_mind_map("nb-1", ctx=mock_ctx)
+
+        assert result["status"] == "failed"
+        assert result["task_id"] == "saved-note"
+        assert result["error"]
+        mock_client.artifacts.wait_for_completion.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        "content", ["", " \t\n", {}, [], "Generation failed", {"name": "Map"}, {"children": "error"}, {"nodes": None}]
+    )
+    @pytest.mark.parametrize("result_type", [dict, getattr(sdk_types, "MindMapResult", SimpleNamespace)])
+    async def test_saved_note_with_invalid_content(self, content, result_type, mock_ctx, mock_client):
+        mock_client.artifacts.generate_mind_map.return_value = result_type(mind_map=content, note_id="saved-note")
+
+        result = await generate_mind_map("nb-1", ctx=mock_ctx)
+
+        assert result["task_id"] == "saved-note"
+        assert result["status"] == "failed"
+        assert result["error"]
+
     async def test_generates_mind_map(self, mock_ctx, mock_client):
         result = await generate_mind_map("nb-1", ctx=mock_ctx)
-        assert result["status"] == "completed"
+        assert result == {"task_id": "note-map", "status": "completed"}
         mock_client.artifacts.generate_mind_map.assert_awaited_once()
+        mock_client.artifacts.wait_for_completion.assert_not_awaited()
+
+    @pytest.mark.parametrize("content", [{"nodes": [{"name": "Topic"}]}, {"name": "Leaf", "children": []}])
+    async def test_legacy_dict_result(self, content, mock_ctx, mock_client):
+        mock_client.artifacts.generate_mind_map.return_value = {
+            "mind_map": content,
+            "note_id": "note-map",
+        }
+        result = await generate_mind_map("nb-1", ctx=mock_ctx)
+        assert result == {"task_id": "note-map", "status": "completed"}
+        mock_client.artifacts.wait_for_completion.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"mind_map": None, "note_id": None},
+            SimpleNamespace(mind_map={"name": "Map", "children": []}, note_id=None),
+            SimpleNamespace(mind_map=None, note_id="empty-note"),
+            {"mind_map": {"children": []}, "note_id": " \t"},
+            SimpleNamespace(mind_map={"nodes": []}, note_id=["note-map"]),
+        ],
+    )
+    async def test_invalid_mind_map_or_note(self, payload, mock_ctx, mock_client):
+        mock_client.artifacts.generate_mind_map.return_value = payload
+        result = await generate_mind_map("nb-1", ctx=mock_ctx)
+        assert result["status"] == "failed"
+        assert result["error"]
+        mock_client.artifacts.wait_for_completion.assert_not_awaited()
 
 
 # ============================================================================
