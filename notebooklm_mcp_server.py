@@ -954,17 +954,22 @@ async def get_chat_history(
     }
 
 
+def _is_valid_generation_id(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
 async def _generation_result(
     client: NotebookLMClient, notebook_id: str, status: GenerationStatus, *, wait_for_media: bool = False
 ) -> dict:
     """A completed media submission still needs the SDK to check for a download URL."""
     task_id = status.task_id
-    if task_id and status.status not in ("failed", "removed") and (wait_for_media or not status.is_complete):
+    has_task_id = _is_valid_generation_id(task_id)
+    if has_task_id and status.status not in ("failed", "removed") and (wait_for_media or not status.is_complete):
         status = await client.artifacts.wait_for_completion(notebook_id, task_id)
 
     result = {"task_id": task_id, "status": status.status}
-    if not task_id:
-        result.update(status="failed", error=status.error or "Generation returned no task ID.")
+    if not has_task_id:
+        result.update(status="failed", error=status.error or "Generation returned no valid task ID.")
     elif not status.is_complete:
         result["error"] = status.error or f"Generation ended with status '{status.status}'."
     if status.error_code:
@@ -1422,9 +1427,11 @@ async def generate_mind_map(
         mind_map, note_id = result.get("mind_map"), result.get("note_id")
     else:
         mind_map, note_id = result.mind_map, result.note_id
+    if isinstance(mind_map, dict) and mind_map.get("status") == "failed":
+        return {"task_id": note_id, "status": "failed", "error": mind_map.get("error") or "Mind map generation failed."}
     if not isinstance(mind_map, dict) or not any(isinstance(mind_map.get(key), list) for key in ("children", "nodes")):
         return {"task_id": note_id, "status": "failed", "error": "Expected a mind map with a children or nodes list."}
-    if not note_id:
+    if not _is_valid_generation_id(note_id):
         return {"task_id": note_id, "status": "failed", "error": "The generated mind map was not saved."}
     return {"task_id": note_id, "status": "completed"}
 

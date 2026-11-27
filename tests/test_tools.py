@@ -352,8 +352,10 @@ class TestGenerateReport:
         assert result == {"task_id": "report-1", "status": "completed"}
         mock_client.artifacts.wait_for_completion.assert_not_awaited()
 
-    async def test_missing_task_id(self, mock_ctx, mock_client):
-        mock_client.artifacts.generate_report.return_value = GenerationStatus(task_id="", status="pending")
+    @pytest.mark.parametrize("task_id", ["", " \t", ["report-1"]], ids=["empty", "whitespace", "list"])
+    @pytest.mark.parametrize("status", ["pending", "completed"])
+    async def test_invalid_task_id(self, task_id, status, mock_ctx, mock_client):
+        mock_client.artifacts.generate_report.return_value = GenerationStatus(task_id=task_id, status=status)
         result = await generate_report("nb-1", ctx=mock_ctx)
         assert result["status"] == "failed"
         assert "task ID" in result["error"]
@@ -446,6 +448,30 @@ async def test_artifact_generation_surfaces_sdk_failure(tool, sdk_method, stage,
 
 
 class TestGenerateMindMap:
+    @pytest.mark.parametrize("result_type", [dict, getattr(sdk_types, "MindMapResult", SimpleNamespace)])
+    @pytest.mark.parametrize("list_key", ["children", "nodes"])
+    async def test_saved_map_reports_sdk_failure(self, result_type, list_key, mock_ctx, mock_client):
+        content = {"status": "failed", "error": "Quota exceeded", list_key: []}
+        mock_client.artifacts.generate_mind_map.return_value = result_type(mind_map=content, note_id="saved-note")
+
+        result = await generate_mind_map("nb-1", ctx=mock_ctx)
+
+        assert result == {"task_id": "saved-note", "status": "failed", "error": "Quota exceeded"}
+        mock_client.artifacts.wait_for_completion.assert_not_awaited()
+
+    async def test_saved_map_failed_without_sdk_reason(self, mock_ctx, mock_client):
+        mock_client.artifacts.generate_mind_map.return_value = {
+            "mind_map": {"status": "failed", "children": []},
+            "note_id": "saved-note",
+        }
+
+        result = await generate_mind_map("nb-1", ctx=mock_ctx)
+
+        assert result["status"] == "failed"
+        assert result["task_id"] == "saved-note"
+        assert result["error"]
+        mock_client.artifacts.wait_for_completion.assert_not_awaited()
+
     @pytest.mark.parametrize(
         "content", ["", " \t\n", {}, [], "Generation failed", {"name": "Map"}, {"children": "error"}, {"nodes": None}]
     )
@@ -465,9 +491,10 @@ class TestGenerateMindMap:
         mock_client.artifacts.generate_mind_map.assert_awaited_once()
         mock_client.artifacts.wait_for_completion.assert_not_awaited()
 
-    async def test_legacy_dict_result(self, mock_ctx, mock_client):
+    @pytest.mark.parametrize("content", [{"nodes": [{"name": "Topic"}]}, {"name": "Leaf", "children": []}])
+    async def test_legacy_dict_result(self, content, mock_ctx, mock_client):
         mock_client.artifacts.generate_mind_map.return_value = {
-            "mind_map": {"nodes": [{"name": "Topic"}]},
+            "mind_map": content,
             "note_id": "note-map",
         }
         result = await generate_mind_map("nb-1", ctx=mock_ctx)
@@ -480,9 +507,11 @@ class TestGenerateMindMap:
             {"mind_map": None, "note_id": None},
             SimpleNamespace(mind_map={"name": "Map", "children": []}, note_id=None),
             SimpleNamespace(mind_map=None, note_id="empty-note"),
+            {"mind_map": {"children": []}, "note_id": " \t"},
+            SimpleNamespace(mind_map={"nodes": []}, note_id=["note-map"]),
         ],
     )
-    async def test_missing_mind_map_or_note(self, payload, mock_ctx, mock_client):
+    async def test_invalid_mind_map_or_note(self, payload, mock_ctx, mock_client):
         mock_client.artifacts.generate_mind_map.return_value = payload
         result = await generate_mind_map("nb-1", ctx=mock_ctx)
         assert result["status"] == "failed"
