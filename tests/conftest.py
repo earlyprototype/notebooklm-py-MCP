@@ -35,6 +35,8 @@ class FakeAnswer:
 @dataclass
 class FakeTaskStatus:
     task_id: str
+    status: str
+    error: str | None = None
 
 
 @dataclass
@@ -114,22 +116,22 @@ def make_mock_client():
         "slide_deck",
         "infographic",
         "data_table",
-        "mind_map",
         "quiz",
     ):
         setattr(
-            client.artifacts, f"generate_{artifact}", AsyncMock(return_value=FakeTaskStatus(task_id=f"task-{artifact}"))
+            client.artifacts,
+            f"generate_{artifact}",
+            AsyncMock(return_value=FakeTaskStatus(f"task-{artifact}", "pending")),
         )
         setattr(client.artifacts, f"download_{artifact}", AsyncMock(return_value=None))
 
-    client.artifacts.wait_for_completion = AsyncMock(return_value=None)
+    client.artifacts.generate_mind_map = AsyncMock(return_value={"mind_map": {"name": "Topic"}, "note_id": "note-1"})
+    client.artifacts.download_mind_map = AsyncMock()
+    client.artifacts.wait_for_completion = AsyncMock(side_effect=lambda nb, task: FakeTaskStatus(task, "completed"))
     client.artifacts.list = AsyncMock(return_value=[])
     client.artifacts.get = AsyncMock(return_value=SimpleNamespace(id="art-1", title="Artifact"))
     client.artifacts.delete = AsyncMock(return_value=None)
     client.artifacts.rename = AsyncMock(return_value=SimpleNamespace(id="art-1", title="Renamed"))
-    client.artifacts.export = AsyncMock(return_value=b"exported-data")
-    client.artifacts.export_report = AsyncMock(return_value=b"report-data")
-    client.artifacts.export_data_table = AsyncMock(return_value=b"table-data")
     client.artifacts.suggest_reports = AsyncMock(
         return_value=[
             SimpleNamespace(
@@ -195,8 +197,10 @@ def app_context(mock_client):
 
 
 @pytest.fixture
-def mock_ctx(app_context):
+def mock_ctx(app_context, monkeypatch, tmp_path):
     """Provide a mocked MCP Context wired to app_context."""
+    monkeypatch.setattr("notebooklm_mcp_server._run_login", AsyncMock(return_value=False))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
     ctx = MagicMock()
     ctx.request_context.lifespan_context = app_context
     ctx.info = AsyncMock()

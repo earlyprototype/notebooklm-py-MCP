@@ -67,7 +67,7 @@ Built on top of [**notebooklm-py**](https://github.com/teng-lin/notebooklm-py) b
 | `generate_slide_deck` | Generate a slide deck |
 | `generate_infographic` | Generate an infographic |
 | `generate_data_table` | Generate a structured data table |
-| `generate_mind_map` | Generate a mind map |
+| `generate_mind_map` | Generate a mind map and return its saved note ID |
 
 #### Artifacts -- Download (9)
 
@@ -91,8 +91,10 @@ Built on top of [**notebooklm-py**](https://github.com/teng-lin/notebooklm-py) b
 | `get_artifact` | Get metadata for a specific artifact |
 | `delete_artifact` | Delete an artifact |
 | `rename_artifact` | Rename an artifact |
-| `export_artifact` | Export an artifact to a file in a given format |
+| `export_artifact` | Download a specific slide deck as PDF, data table as CSV, or mind map, quiz or flashcards as JSON |
 | `suggest_reports` | Get AI-suggested report formats for a notebook |
+
+On Windows, `export_artifact` requires a volume that supports file access control lists. When replacing a file, it preserves the owner and access permissions. If Windows cannot apply those permissions, the original file stays in place.
 
 #### Research (3)
 
@@ -302,7 +304,7 @@ Once configured, you can interact with NotebookLM directly from your AI agent:
 
 **Generate content:**
 > "Generate a podcast overview for the Project notebook"
-> "Generate a report from the Strategy notebook and download it as PDF"
+> "Generate a report from the Strategy notebook and download it as Markdown"
 > "Create flashcards from the Training notebook"
 
 **Research:**
@@ -325,6 +327,7 @@ Once configured, you can interact with NotebookLM directly from your AI agent:
 ```
 notebooklm-py-mcp/
   notebooklm_mcp_server.py   # MCP server (tools, resources, prompts)
+  notebooklm_mcp_windows.py  # Windows file permissions for local exports
   pyproject.toml              # Python packaging and tool configuration
   requirements.txt            # Convenience dependency file
   INSTRUCTIONS.md             # Context injected into the LLM when loaded
@@ -349,7 +352,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-Tool tests are fully mocked, so the suite needs no Google account. Alongside them, `tests/test_sdk_contracts.py` uses `inspect.signature` against the real notebooklm-py SDK to verify every argument this server passes actually exists in the installed SDK -- catching renamed or removed parameters that mocks would silently accept.
+The tests run offline with synthetic notebooks and artifacts. Generation tests exercise the installed SDK's request builders and check how the tools report failed jobs. `tests/test_sdk_contracts.py` checks the SDK method signatures used by the server.
 
 ### Linting
 
@@ -360,7 +363,7 @@ ruff format .
 
 ## INSTRUCTIONS.md
 
-The `INSTRUCTIONS.md` file is loaded by MCP clients alongside the server and provides the LLM with usage context -- workflow patterns, error handling guidance, and tool conventions. Place it next to `notebooklm_mcp_server.py` or in the MCP server metadata directory used by your client.
+The server sends the contents of `INSTRUCTIONS.md` in the MCP initialization response. Clients receive workflow patterns, error handling guidance and tool conventions when they connect. The wheel includes the guidance.
 
 ## Acknowledgements
 

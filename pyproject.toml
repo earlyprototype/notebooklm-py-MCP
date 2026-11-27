@@ -23,9 +23,11 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
-    "notebooklm-py[browser]>=0.3.2",
-    "mcp[cli]>=1.0.0",
+    # The server uses NotebooksAPI.share and MCP's v1 FastMCP interface.
+    "notebooklm-py[browser]>=0.3.2,<0.8",
+    "mcp[cli]>=1.0.0,<2",
     "pymupdf>=1.24.0",
+    "pywin32; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
@@ -61,6 +63,7 @@ filterwarnings = [
 ]
 
 [tool.hatch.build.targets.wheel]
-# Single-module project: the module name does not match the project name,
-# so hatchling needs to be told explicitly what ships in the wheel.
-only-include = ["notebooklm_mcp_server.py"]
+only-include = ["notebooklm_mcp_server.py", "notebooklm_mcp_windows.py"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"INSTRUCTIONS.md" = "notebooklm_mcp_data/INSTRUCTIONS.md"
