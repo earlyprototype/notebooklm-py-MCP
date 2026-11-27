@@ -26,11 +26,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.session import ServerSession
 from notebooklm import NotebookLMClient
-from notebooklm.types import GenerationStatus
+from notebooklm.types import AudioFormat, AudioLength, GenerationStatus, QuizDifficulty, QuizQuantity
 
 ACTIVE_PROFILE_PATH = Path.home() / ".notebooklm-active.json"
 
@@ -953,10 +954,12 @@ async def get_chat_history(
     }
 
 
-async def _generation_result(client: NotebookLMClient, notebook_id: str, status: GenerationStatus) -> dict:
-    """Wait for active generation tasks and return the SDK outcome."""
+async def _generation_result(
+    client: NotebookLMClient, notebook_id: str, status: GenerationStatus, *, wait_for_media: bool = False
+) -> dict:
+    """A completed media submission still needs the SDK to check for a download URL."""
     task_id = status.task_id
-    if task_id and status.status not in ("completed", "failed", "removed"):
+    if task_id and status.status not in ("failed", "removed") and (wait_for_media or not status.is_complete):
         status = await client.artifacts.wait_for_completion(notebook_id, task_id)
 
     result = {"task_id": task_id, "status": status.status}
@@ -973,8 +976,8 @@ async def _generation_result(client: NotebookLMClient, notebook_id: str, status:
 async def generate_audio_overview(
     notebook_id: str,
     instructions: str = "",
-    audio_format: str = "deep-dive",
-    length: str = "medium",
+    audio_format: Literal["deep-dive", "brief", "critique", "debate"] = "deep-dive",
+    length: Literal["short", "medium", "long"] = "medium",
     ctx: Context[ServerSession, AppContext] = None,
 ) -> dict:
     """Generate an audio overview (podcast) from notebook sources.
@@ -997,11 +1000,14 @@ async def generate_audio_overview(
     await ctx.report_progress(0.2, 1.0, "Starting generation...")
 
     status = await client.artifacts.generate_audio(
-        notebook_id, instructions=instructions, audio_format=audio_format, audio_length=length
+        notebook_id,
+        instructions=instructions,
+        audio_format=AudioFormat[audio_format.replace("-", "_").upper()],
+        audio_length=AudioLength.DEFAULT if length == "medium" else AudioLength[length.upper()],
     )
 
     await ctx.report_progress(0.5, 1.0, "Checking generation status...")
-    result = await _generation_result(client, notebook_id, status)
+    result = await _generation_result(client, notebook_id, status, wait_for_media=True)
     if result["status"] == "completed":
         await ctx.report_progress(1.0, 1.0, "Audio generation complete")
     return {**result, "format": audio_format, "length": length}
@@ -1036,8 +1042,8 @@ async def download_audio(notebook_id: str, output_path: str, ctx: Context[Server
 @mcp.tool()
 async def generate_quiz(
     notebook_id: str,
-    quantity: str = "standard",
-    difficulty: str = "medium",
+    quantity: Literal["few", "standard", "more"] = "standard",
+    difficulty: Literal["easy", "medium", "hard"] = "medium",
     ctx: Context[ServerSession, AppContext] = None,
 ) -> dict:
     """Generate a quiz from notebook sources.
@@ -1058,7 +1064,11 @@ async def generate_quiz(
     await ctx.info(f"Generating quiz: {difficulty} difficulty, {quantity} questions")
     await ctx.report_progress(0.3, 1.0, "Starting generation...")
 
-    status = await client.artifacts.generate_quiz(notebook_id, quantity=quantity, difficulty=difficulty)
+    status = await client.artifacts.generate_quiz(
+        notebook_id,
+        quantity=QuizQuantity.FEWER if quantity == "few" else QuizQuantity[quantity.upper()],
+        difficulty=QuizDifficulty[difficulty.upper()],
+    )
 
     await ctx.report_progress(0.7, 1.0, "Checking generation status...")
     result = await _generation_result(client, notebook_id, status)
@@ -1123,7 +1133,7 @@ async def generate_video(
     await ctx.info("Generating video...")
     client = app.client
     status = await client.artifacts.generate_video(notebook_id, instructions=instructions)
-    return await _generation_result(client, notebook_id, status)
+    return await _generation_result(client, notebook_id, status, wait_for_media=True)
 
 
 @mcp.tool()
@@ -1267,7 +1277,7 @@ async def generate_slide_deck(
     await ctx.info("Generating slide deck...")
     client = app.client
     status = await client.artifacts.generate_slide_deck(notebook_id, instructions=instructions)
-    return await _generation_result(client, notebook_id, status)
+    return await _generation_result(client, notebook_id, status, wait_for_media=True)
 
 
 @mcp.tool()
@@ -1315,7 +1325,7 @@ async def generate_infographic(
     await ctx.info("Generating infographic...")
     client = app.client
     status = await client.artifacts.generate_infographic(notebook_id, instructions=instructions)
-    return await _generation_result(client, notebook_id, status)
+    return await _generation_result(client, notebook_id, status, wait_for_media=True)
 
 
 @mcp.tool()
@@ -1412,7 +1422,7 @@ async def generate_mind_map(
         mind_map, note_id = result.get("mind_map"), result.get("note_id")
     else:
         mind_map, note_id = result.mind_map, result.note_id
-    if mind_map is None:
+    if not mind_map or (isinstance(mind_map, str) and not mind_map.strip()):
         return {"task_id": note_id, "status": "failed", "error": "Generation returned no mind map."}
     if not note_id:
         return {"task_id": note_id, "status": "failed", "error": "The generated mind map was not saved."}

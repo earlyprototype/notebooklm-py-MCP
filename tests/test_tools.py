@@ -7,6 +7,7 @@ expected arguments and returns a well-structured result dict.
 from types import SimpleNamespace
 
 import pytest
+from notebooklm import types as sdk_types
 from notebooklm.types import GenerationStatus
 
 from notebooklm_mcp_server import (
@@ -445,6 +446,17 @@ async def test_artifact_generation_surfaces_sdk_failure(tool, sdk_method, stage,
 
 
 class TestGenerateMindMap:
+    @pytest.mark.parametrize("content", ["", " \t\n", {}, []])
+    @pytest.mark.parametrize("result_type", [dict, getattr(sdk_types, "MindMapResult", SimpleNamespace)])
+    async def test_saved_note_with_blank_content(self, content, result_type, mock_ctx, mock_client):
+        mock_client.artifacts.generate_mind_map.return_value = result_type(mind_map=content, note_id="empty-note")
+
+        result = await generate_mind_map("nb-1", ctx=mock_ctx)
+
+        assert result["task_id"] == "empty-note"
+        assert result["status"] == "failed"
+        assert result["error"]
+
     async def test_generates_mind_map(self, mock_ctx, mock_client):
         result = await generate_mind_map("nb-1", ctx=mock_ctx)
         assert result == {"task_id": "note-map", "status": "completed"}
