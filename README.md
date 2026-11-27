@@ -94,6 +94,8 @@ Built on top of [**notebooklm-py**](https://github.com/teng-lin/notebooklm-py) b
 | `export_artifact` | Download a specific slide deck as PDF, data table as CSV, or mind map, quiz or flashcards as JSON |
 | `suggest_reports` | Get AI-suggested report formats for a notebook |
 
+On Windows, `export_artifact` requires a volume that supports file access control lists. When replacing a file, it preserves the owner and access permissions. If Windows cannot apply those permissions, the original file stays in place.
+
 #### Research (3)
 
 | Tool | Description |
@@ -325,6 +327,7 @@ Once configured, you can interact with NotebookLM directly from your AI agent:
 ```
 notebooklm-py-mcp/
   notebooklm_mcp_server.py   # MCP server (tools, resources, prompts)
+  notebooklm_mcp_windows.py  # Windows file permissions for local exports
   pyproject.toml              # Python packaging and tool configuration
   requirements.txt            # Convenience dependency file
   INSTRUCTIONS.md             # Context injected into the LLM when loaded

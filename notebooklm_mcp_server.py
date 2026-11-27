@@ -23,15 +23,27 @@ import os
 import subprocess
 import sys
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager, suppress
+from contextlib import ExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Literal
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.session import ServerSession
 from notebooklm import AudioFormat, AudioLength, GenerationStatus, NotebookLMClient, QuizDifficulty, QuizQuantity
+
+if os.name == "nt":
+    from notebooklm_mcp_windows import export_directory as _export_directory
+    from notebooklm_mcp_windows import publish_export as _publish_export
+else:
+    from tempfile import TemporaryDirectory as _export_directory
+
+    def _publish_export(staged_path: Path, destination: Path) -> None:
+        if os.name == "posix":
+            with suppress(FileNotFoundError):
+                staged_path.chmod(destination.stat().st_mode & 0o777)
+        os.replace(staged_path, destination)
+
 
 ACTIVE_PROFILE_PATH = Path.home() / ".notebooklm-active.json"
 
@@ -1601,7 +1613,11 @@ async def export_artifact(
         return {"error": f"This artifact supports {native_format} export, requested {fmt}"}
     destination.parent.mkdir(parents=True, exist_ok=True)
     # SDK 0.3.2 finishes PDF downloads with rename, which needs a fresh path on Windows.
-    with TemporaryDirectory(dir=destination.parent) as directory:
+    with ExitStack() as cleanup:
+        try:
+            directory = cleanup.enter_context(_export_directory(dir=destination.parent))
+        except OSError as exc:
+            return {"error": f"Cannot create a private export directory: {exc}"}
         staged_path = Path(directory) / f"artifact.{native_format}"
         await download(notebook_id, str(staged_path), artifact_id=artifact_id)
         if native_format == "pdf":
@@ -1614,10 +1630,10 @@ async def export_artifact(
                     deck.load_page(0)
             except Exception as exc:
                 return {"error": f"Cannot read the downloaded slide deck as a PDF: {exc}"}
-        if os.name == "posix":
-            with suppress(FileNotFoundError):
-                staged_path.chmod(destination.stat().st_mode & 0o777)
-        os.replace(staged_path, destination)
+        try:
+            _publish_export(staged_path, destination)
+        except OSError as exc:
+            return {"error": f"Cannot publish the exported file: {exc}"}
     return {"output_path": output_path, "success": True}
 
 
