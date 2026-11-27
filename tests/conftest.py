@@ -120,7 +120,7 @@ def make_mock_client():
         setattr(client.artifacts, f"download_{artifact}", AsyncMock(return_value=None))
 
     client.artifacts.generate_mind_map = AsyncMock(
-        return_value=SimpleNamespace(mind_map={"name": "Map"}, note_id="note-map")
+        return_value=SimpleNamespace(mind_map={"name": "Map", "children": [{"name": "Topic"}]}, note_id="note-map")
     )
     client.artifacts.download_mind_map = AsyncMock(return_value=None)
     client.artifacts.wait_for_completion = AsyncMock(

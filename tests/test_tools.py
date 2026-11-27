@@ -446,14 +446,16 @@ async def test_artifact_generation_surfaces_sdk_failure(tool, sdk_method, stage,
 
 
 class TestGenerateMindMap:
-    @pytest.mark.parametrize("content", ["", " \t\n", {}, []])
+    @pytest.mark.parametrize(
+        "content", ["", " \t\n", {}, [], "Generation failed", {"name": "Map"}, {"children": "error"}, {"nodes": None}]
+    )
     @pytest.mark.parametrize("result_type", [dict, getattr(sdk_types, "MindMapResult", SimpleNamespace)])
-    async def test_saved_note_with_blank_content(self, content, result_type, mock_ctx, mock_client):
-        mock_client.artifacts.generate_mind_map.return_value = result_type(mind_map=content, note_id="empty-note")
+    async def test_saved_note_with_invalid_content(self, content, result_type, mock_ctx, mock_client):
+        mock_client.artifacts.generate_mind_map.return_value = result_type(mind_map=content, note_id="saved-note")
 
         result = await generate_mind_map("nb-1", ctx=mock_ctx)
 
-        assert result["task_id"] == "empty-note"
+        assert result["task_id"] == "saved-note"
         assert result["status"] == "failed"
         assert result["error"]
 
@@ -464,7 +466,10 @@ class TestGenerateMindMap:
         mock_client.artifacts.wait_for_completion.assert_not_awaited()
 
     async def test_legacy_dict_result(self, mock_ctx, mock_client):
-        mock_client.artifacts.generate_mind_map.return_value = {"mind_map": {"name": "Map"}, "note_id": "note-map"}
+        mock_client.artifacts.generate_mind_map.return_value = {
+            "mind_map": {"nodes": [{"name": "Topic"}]},
+            "note_id": "note-map",
+        }
         result = await generate_mind_map("nb-1", ctx=mock_ctx)
         assert result == {"task_id": "note-map", "status": "completed"}
         mock_client.artifacts.wait_for_completion.assert_not_awaited()
@@ -473,7 +478,7 @@ class TestGenerateMindMap:
         "payload",
         [
             {"mind_map": None, "note_id": None},
-            SimpleNamespace(mind_map={"name": "Map"}, note_id=None),
+            SimpleNamespace(mind_map={"name": "Map", "children": []}, note_id=None),
             SimpleNamespace(mind_map=None, note_id="empty-note"),
         ],
     )

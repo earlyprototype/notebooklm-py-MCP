@@ -1422,8 +1422,8 @@ async def generate_mind_map(
         mind_map, note_id = result.get("mind_map"), result.get("note_id")
     else:
         mind_map, note_id = result.mind_map, result.note_id
-    if not mind_map or (isinstance(mind_map, str) and not mind_map.strip()):
-        return {"task_id": note_id, "status": "failed", "error": "Generation returned no mind map."}
+    if not isinstance(mind_map, dict) or not any(isinstance(mind_map.get(key), list) for key in ("children", "nodes")):
+        return {"task_id": note_id, "status": "failed", "error": "Expected a mind map with a children or nodes list."}
     if not note_id:
         return {"task_id": note_id, "status": "failed", "error": "The generated mind map was not saved."}
     return {"task_id": note_id, "status": "completed"}
