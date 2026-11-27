@@ -35,7 +35,7 @@ IMPORTANT - Content generation:
 6. generate_slide_deck: Creates a presentation slide deck
 7. generate_infographic: Creates a visual infographic
 8. generate_data_table: Creates a structured data table
-9. generate_mind_map: Creates a mind map from sources
+9. generate_mind_map returns the generated map and its saved note_id. Use this ID to export the map.
 10. suggest_reports: Returns AI-suggested report formats tailored to the notebook's content, each with a title, description, and prompt that can be passed directly to generate_report
 11. Always generate before downloading -- download tools retrieve the most recently generated artifact
 12. Generation is a two-step process: generate -> download
@@ -44,12 +44,13 @@ IMPORTANT - Content generation:
     - download_slide_deck: PDF (.pdf)
     - download_audio: WAV (.wav)
     - download_video: MP4 (.mp4)
-    - download_report: PDF (.pdf)
-    - download_infographic: PDF (.pdf)
+    - download_report: Markdown (.md)
+    - download_infographic: Image (.png)
     - download_quiz: depends on output_format param (json, markdown, html)
-    - download_flashcards: PDF (.pdf)
-    - download_data_table: PDF (.pdf)
-    - download_mind_map: PDF (.pdf)
+    - download_flashcards: JSON (.json)
+    - download_data_table: CSV (.csv)
+    - download_mind_map: JSON (.json)
+15. Use export_artifact with the artifact ID for a specific slide deck (PDF), data table (CSV), mind map, quiz or flashcards (JSON).
 
 IMPORTANT - Source management:
 - list_sources: Lists all sources in a notebook with IDs, titles, type, and processing status

@@ -6,8 +6,8 @@ with Cursor, Claude Code, and other MCP-compatible LLM clients.
 Built on top of notebooklm-py: https://github.com/teng-lin/notebooklm-py
 
 Requires:
-    - notebooklm-py >= 0.3.2
-    - mcp[cli] >= 1.0.0
+    - notebooklm-py >= 0.3.2, < 0.8
+    - mcp[cli] >= 1.0.0, < 2
     - A valid NotebookLM authentication session (run: notebooklm login)
 
 Account selection:
@@ -29,7 +29,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.session import ServerSession
-from notebooklm import NotebookLMClient
+from notebooklm import GenerationStatus, NotebookLMClient
 
 ACTIVE_PROFILE_PATH = Path.home() / ".notebooklm-active.json"
 
@@ -247,7 +247,14 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 
 
 # Initialise FastMCP server with lifespan
-mcp = FastMCP("NotebookLM", lifespan=app_lifespan)
+instructions_path = Path(__file__).with_name("notebooklm_mcp_data") / "INSTRUCTIONS.md"
+if not instructions_path.is_file():
+    instructions_path = Path(__file__).with_name("INSTRUCTIONS.md")
+mcp = FastMCP(
+    "NotebookLM",
+    lifespan=app_lifespan,
+    instructions=instructions_path.read_text(encoding="utf-8"),
+)
 
 
 # ============================================================================
@@ -952,6 +959,15 @@ async def get_chat_history(
     }
 
 
+async def _finish_generation(client: NotebookLMClient, notebook_id: str, status: GenerationStatus) -> dict:
+    if status.status not in ("completed", "failed"):
+        status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
+    result = {"task_id": status.task_id, "status": status.status}
+    if status.error:
+        result["error"] = status.error
+    return result
+
+
 @mcp.tool()
 async def generate_audio_overview(
     notebook_id: str,
@@ -984,11 +1000,9 @@ async def generate_audio_overview(
     )
 
     await ctx.report_progress(0.5, 1.0, "Waiting for generation to complete...")
-    await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-
-    await ctx.report_progress(1.0, 1.0, "Audio generation complete")
-
-    return {"task_id": status.task_id, "status": "completed", "format": audio_format, "length": length}
+    result = await _finish_generation(client, notebook_id, status)
+    await ctx.report_progress(1.0, 1.0, f"Audio generation: {result['status']}")
+    return {**result, "format": audio_format, "length": length}
 
 
 @mcp.tool()
@@ -1045,11 +1059,9 @@ async def generate_quiz(
     status = await client.artifacts.generate_quiz(notebook_id, quantity=quantity, difficulty=difficulty)
 
     await ctx.report_progress(0.7, 1.0, "Waiting for completion...")
-    await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-
-    await ctx.report_progress(1.0, 1.0, "Quiz generation complete")
-
-    return {"task_id": status.task_id, "status": "completed", "quantity": quantity, "difficulty": difficulty}
+    result = await _finish_generation(client, notebook_id, status)
+    await ctx.report_progress(1.0, 1.0, f"Quiz generation: {result['status']}")
+    return {**result, "quantity": quantity, "difficulty": difficulty}
 
 
 @mcp.tool()
@@ -1107,8 +1119,7 @@ async def generate_video(
 
     await ctx.info("Generating video...")
     status = await app.client.artifacts.generate_video(notebook_id, instructions=instructions)
-    await app.client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return {"task_id": status.task_id, "status": "completed"}
+    return await _finish_generation(app.client, notebook_id, status)
 
 
 @mcp.tool()
@@ -1155,8 +1166,7 @@ async def generate_report(
 
     await ctx.info("Generating report...")
     status = await app.client.artifacts.generate_report(notebook_id, custom_prompt=instructions)
-    await app.client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return {"task_id": status.task_id, "status": "completed"}
+    return await _finish_generation(app.client, notebook_id, status)
 
 
 @mcp.tool()
@@ -1203,8 +1213,7 @@ async def generate_flashcards(
 
     await ctx.info("Generating flashcards...")
     status = await app.client.artifacts.generate_flashcards(notebook_id, instructions=instructions)
-    await app.client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return {"task_id": status.task_id, "status": "completed"}
+    return await _finish_generation(app.client, notebook_id, status)
 
 
 @mcp.tool()
@@ -1251,8 +1260,7 @@ async def generate_slide_deck(
 
     await ctx.info("Generating slide deck...")
     status = await app.client.artifacts.generate_slide_deck(notebook_id, instructions=instructions)
-    await app.client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return {"task_id": status.task_id, "status": "completed"}
+    return await _finish_generation(app.client, notebook_id, status)
 
 
 @mcp.tool()
@@ -1299,8 +1307,7 @@ async def generate_infographic(
 
     await ctx.info("Generating infographic...")
     status = await app.client.artifacts.generate_infographic(notebook_id, instructions=instructions)
-    await app.client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return {"task_id": status.task_id, "status": "completed"}
+    return await _finish_generation(app.client, notebook_id, status)
 
 
 @mcp.tool()
@@ -1347,8 +1354,7 @@ async def generate_data_table(
 
     await ctx.info("Generating data table...")
     status = await app.client.artifacts.generate_data_table(notebook_id, instructions=instructions)
-    await app.client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return {"task_id": status.task_id, "status": "completed"}
+    return await _finish_generation(app.client, notebook_id, status)
 
 
 @mcp.tool()
@@ -1379,22 +1385,25 @@ async def generate_mind_map(
     notebook_id: str,
     ctx: Context[ServerSession, AppContext] = None,
 ) -> dict:
-    """Generate a mind map from notebook sources.
+    """Generate a mind map from notebook sources and save it as a note.
 
     Args:
         notebook_id: ID of the notebook
 
     Returns:
-        Dictionary with task status
+        Dictionary with the mind map, saved note ID and completion status
     """
     app = ctx.request_context.lifespan_context
     if not await _ensure_authenticated(app, ctx):
         return {"error": "Authentication failed. Please check the logs."}
 
     await ctx.info("Generating mind map...")
-    status = await app.client.artifacts.generate_mind_map(notebook_id)
-    await app.client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return {"task_id": status.task_id, "status": "completed"}
+    result = await app.client.artifacts.generate_mind_map(notebook_id)
+    if isinstance(result, dict):
+        mind_map, note_id = result["mind_map"], result["note_id"]
+    else:
+        mind_map, note_id = result.mind_map, result.note_id
+    return {"mind_map": mind_map, "note_id": note_id, "status": "completed" if note_id else "failed"}
 
 
 @mcp.tool()
@@ -1541,26 +1550,45 @@ async def export_artifact(
 ) -> dict:
     """Export an artifact to a file in the requested format.
 
-    Uses the appropriate export method based on the artifact type.
-    For reports, export_report is used; for data tables, export_data_table;
-    for all others, the generic export method.
+    Slide decks download as PDF, data tables as CSV, and mind maps,
+    quizzes and flashcards as JSON.
 
     Args:
         notebook_id: ID of the notebook
         artifact_id: ID of the artifact to export
         output_path: Path where to save the exported file
-        export_format: Desired format (pdf, csv, json, etc.). Leave empty for default.
+        export_format: pdf, csv or json. Defaults to the output path extension,
+            or the artifact's native format if the path has no extension.
 
     Returns:
         Dictionary with export status
     """
+    fmt = export_format.strip().lower() or Path(output_path).suffix[1:].lower()
+    if fmt and fmt not in ("pdf", "csv", "json"):
+        return {"error": f"Unsupported local export format: {fmt}"}
+
     app = ctx.request_context.lifespan_context
     if not await _ensure_authenticated(app, ctx):
         return {"error": "Authentication failed. Please check the logs."}
 
     await ctx.info(f"Exporting artifact to: {output_path}")
-    data = await app.client.artifacts.export(notebook_id, artifact_id, export_type=export_format or None)
-    Path(output_path).write_bytes(data if isinstance(data, bytes) else str(data).encode("utf-8"))
+    artifacts = app.client.artifacts
+    artifact = await artifacts.get(notebook_id, artifact_id)
+    if artifact is None:
+        return {"error": f"Artifact not found: {artifact_id}"}
+    downloads = {
+        "slide_deck": ("pdf", artifacts.download_slide_deck),
+        "data_table": ("csv", artifacts.download_data_table),
+        "mind_map": ("json", artifacts.download_mind_map),
+        "quiz": ("json", artifacts.download_quiz),
+        "flashcards": ("json", artifacts.download_flashcards),
+    }
+    if artifact.kind not in downloads:
+        return {"error": f"Local export is unavailable for {artifact.kind} artifacts"}
+    native_format, download = downloads[artifact.kind]
+    if fmt and fmt != native_format:
+        return {"error": f"This artifact supports {native_format} export, requested {fmt}"}
+    await download(notebook_id, output_path, artifact_id=artifact_id)
     return {"output_path": output_path, "success": True}
 
 

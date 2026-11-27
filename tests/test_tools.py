@@ -4,6 +4,14 @@ Each test verifies that the tool calls the correct SDK method with the
 expected arguments and returns a well-structured result dict.
 """
 
+import csv
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import fitz
+import pytest
+
 from notebooklm_mcp_server import (
     add_shared_user,
     add_source_drive,
@@ -376,11 +384,61 @@ class TestGenerateDataTable:
         mock_client.artifacts.generate_data_table.assert_awaited_once()
 
 
+@pytest.mark.parametrize(
+    ("generate", "kind"),
+    [
+        (generate_audio_overview, "audio"),
+        (generate_video, "video"),
+        (generate_report, "report"),
+        (generate_quiz, "quiz"),
+        (generate_flashcards, "flashcards"),
+        (generate_slide_deck, "slide_deck"),
+        (generate_infographic, "infographic"),
+        (generate_data_table, "data_table"),
+    ],
+)
+async def test_failed_generation(generate, kind, mock_ctx, mock_client):
+    wait = mock_client.artifacts.wait_for_completion
+    wait.side_effect = None
+    wait.return_value = SimpleNamespace(task_id=f"task-{kind}", status="failed", error="Generation failed")
+    result = await generate("nb-1", ctx=mock_ctx)
+    wait.assert_awaited_once_with("nb-1", f"task-{kind}")
+    assert result["task_id"] == f"task-{kind}"
+    assert result["status"] == "failed"
+    assert result["error"] == "Generation failed"
+
+
+async def test_generation_rejected_before_polling(mock_ctx, mock_client):
+    mock_client.artifacts.generate_report.return_value = SimpleNamespace(task_id="", status="failed", error="Rejected")
+    result = await generate_report("nb-1", ctx=mock_ctx)
+    assert result == {"task_id": "", "status": "failed", "error": "Rejected"}
+    mock_client.artifacts.wait_for_completion.assert_not_called()
+
+
 class TestGenerateMindMap:
-    async def test_generates_mind_map(self, mock_ctx, mock_client):
+    @pytest.mark.parametrize(
+        "sdk_result",
+        [
+            {"mind_map": {"name": "Topic"}, "note_id": "note-1"},
+            SimpleNamespace(mind_map={"name": "Topic"}, note_id="note-1"),
+        ],
+        ids=["dictionary", "object"],
+    )
+    async def test_generates_mind_map(self, mock_ctx, mock_client, sdk_result):
+        mock_client.artifacts.generate_mind_map.return_value = sdk_result
         result = await generate_mind_map("nb-1", ctx=mock_ctx)
         assert result["status"] == "completed"
-        mock_client.artifacts.generate_mind_map.assert_awaited_once()
+        assert result["note_id"] == "note-1"
+        assert result["mind_map"] == {"name": "Topic"}
+        mock_client.artifacts.generate_mind_map.assert_awaited_once_with("nb-1")
+        mock_client.artifacts.wait_for_completion.assert_not_called()
+
+    async def test_unsaved_map(self, mock_ctx, mock_client):
+        mock_client.artifacts.generate_mind_map.return_value = {"mind_map": None, "note_id": None}
+        result = await generate_mind_map("nb-1", ctx=mock_ctx)
+        assert result["status"] == "failed"
+        assert result["note_id"] is None
+        mock_client.artifacts.wait_for_completion.assert_not_called()
 
 
 # ============================================================================
@@ -485,11 +543,48 @@ class TestRenameArtifact:
 
 
 class TestExportArtifact:
-    async def test_exports_artifact(self, mock_ctx, mock_client, tmp_path):
-        out = str(tmp_path / "export.pdf")
-        result = await export_artifact("nb-1", "art-1", out, "pdf", ctx=mock_ctx)
-        assert result["success"] is True
-        mock_client.artifacts.export.assert_awaited_once()
+    @pytest.mark.parametrize(
+        ("kind", "extension"),
+        [("slide_deck", "pdf"), ("data_table", "csv"), ("mind_map", "json"), ("quiz", "json"), ("flashcards", "json")],
+    )
+    async def test_downloads_requested_artifact(self, mock_ctx, mock_client, tmp_path, kind, extension):
+        def download(notebook_id, output_path, *, artifact_id):
+            if extension == "pdf":
+                with fitz.open() as doc:
+                    doc.new_page().insert_text((50, 50), artifact_id)
+                    doc.save(output_path)
+            elif extension == "csv":
+                with open(output_path, "w", encoding="utf-8", newline="") as stream:
+                    csv.writer(stream).writerows([["id", "title"], [artifact_id, "Row, one"]])
+            else:
+                Path(output_path).write_text(json.dumps({"id": artifact_id}), encoding="utf-8")
+
+        artifacts = mock_client.artifacts
+        artifacts.get.return_value = SimpleNamespace(kind=kind)
+        getattr(artifacts, f"download_{kind}").side_effect = download
+        path = tmp_path / f"export.{extension}"
+        result = await export_artifact("nb-1", "art-2", str(path), extension, ctx=mock_ctx)
+        assert result == {"success": True, "output_path": str(path)}
+        artifacts.get.assert_awaited_once_with("nb-1", "art-2")
+        getattr(artifacts, f"download_{kind}").assert_awaited_once_with("nb-1", str(path), artifact_id="art-2")
+        if extension == "pdf":
+            with fitz.open(path) as doc:
+                assert doc.is_pdf and doc.page_count == 1
+                assert doc[0].get_text().strip() == "art-2"
+        elif extension == "csv":
+            with path.open(encoding="utf-8-sig", newline="") as stream:
+                assert list(csv.reader(stream)) == [["id", "title"], ["art-2", "Row, one"]]
+        else:
+            assert json.loads(path.read_text(encoding="utf-8")) == {"id": "art-2"}
+
+    @pytest.mark.parametrize("fmt", ["xlsx", "pdf", ""])
+    async def test_unsupported_format(self, mock_ctx, mock_client, tmp_path, fmt):
+        mock_client.artifacts.get.return_value = SimpleNamespace(kind="data_table")
+        path = tmp_path / f"export.{fmt or 'xlsx'}"
+        result = await export_artifact("nb-1", "art-2", str(path), fmt, ctx=mock_ctx)
+        assert "error" in result
+        assert not path.exists()
+        mock_client.artifacts.download_data_table.assert_not_called()
 
 
 class TestSuggestReports:

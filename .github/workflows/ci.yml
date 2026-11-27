@@ -32,3 +32,23 @@ jobs:
       # instead of installing dependencies directly and masking it.
       - run: pip install -e ".[dev]"
       - run: pytest tests/ -v --tb=short --cov=notebooklm_mcp_server --cov-report=term-missing
+
+  installs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Convert a PDF with the requirements-file install
+        run: |
+          python -m venv "$RUNNER_TEMP/requirements"
+          "$RUNNER_TEMP/requirements/bin/python" -m pip install -r requirements.txt
+          "$RUNNER_TEMP/requirements/bin/python" -I tests/smoke/requirements_pdf.py
+      - name: Connect to the installed wheel over stdio
+        run: |
+          python -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/wheels" .
+          cd "$RUNNER_TEMP"
+          python -m venv installed
+          installed/bin/python -m pip install wheels/*.whl
+          installed/bin/python -I "$GITHUB_WORKSPACE/tests/smoke/installed_wheel.py"
