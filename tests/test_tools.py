@@ -6,11 +6,24 @@ expected arguments and returns a well-structured result dict.
 
 import csv
 import json
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import fitz
 import pytest
+from notebooklm import (
+    AudioFormat,
+    AudioLength,
+    AuthTokens,
+    GenerationStatus,
+    NotebookLMClient,
+    QuizDifficulty,
+    QuizQuantity,
+)
+from notebooklm._artifacts import ArtifactsAPI
+from notebooklm.rpc.types import ArtifactStatus, ArtifactTypeCode
 
 from notebooklm_mcp_server import (
     add_shared_user,
@@ -328,10 +341,22 @@ class TestGetChatHistory:
 
 
 class TestGenerateAudioOverview:
-    async def test_generates_audio(self, mock_ctx, mock_client):
-        result = await generate_audio_overview("nb-1", "", "deep-dive", "medium", mock_ctx)
+    @pytest.mark.parametrize(
+        ("audio_format", "length", "sdk_format", "sdk_length"),
+        [
+            ("deep-dive", "medium", AudioFormat.DEEP_DIVE, AudioLength.DEFAULT),
+            ("brief", "short", AudioFormat.BRIEF, AudioLength.SHORT),
+            ("critique", "long", AudioFormat.CRITIQUE, AudioLength.LONG),
+            ("debate", "medium", AudioFormat.DEBATE, AudioLength.DEFAULT),
+        ],
+    )
+    async def test_generates_audio(self, mock_ctx, mock_client, audio_format, length, sdk_format, sdk_length):
+        result = await generate_audio_overview("nb-1", "Focus on costs", audio_format, length, mock_ctx)
         assert result["status"] == "completed"
-        mock_client.artifacts.generate_audio.assert_awaited_once()
+        assert (result["format"], result["length"]) == (audio_format, length)
+        mock_client.artifacts.generate_audio.assert_awaited_once_with(
+            "nb-1", instructions="Focus on costs", audio_format=sdk_format, audio_length=sdk_length
+        )
         mock_client.artifacts.wait_for_completion.assert_awaited()
 
 
@@ -340,6 +365,23 @@ class TestGenerateVideo:
         result = await generate_video("nb-1", ctx=mock_ctx)
         assert result["status"] == "completed"
         mock_client.artifacts.generate_video.assert_awaited_once()
+
+    async def test_completed_submission_still_waits_for_media(self, mock_ctx, mock_client):
+        artifacts = mock_client.artifacts
+        artifacts.generate_video.return_value = GenerationStatus(task_id="video-1", status="completed")
+        sdk = NotebookLMClient(AuthTokens(cookies={}, csrf_token="", session_id="")).artifacts
+        # The first video record has a completed status but no media URL.
+        sdk._list_raw = AsyncMock(
+            side_effect=[
+                [["video-1", "Video", ArtifactTypeCode.VIDEO, None, ArtifactStatus.COMPLETED]],
+                [["video-1", "Video", ArtifactTypeCode.VIDEO, None, ArtifactStatus.FAILED]],
+            ]
+        )
+        artifacts.wait_for_completion.side_effect = partial(sdk.wait_for_completion, initial_interval=0)
+        result = await generate_video("nb-1", ctx=mock_ctx)
+        assert (result["task_id"], result["status"]) == ("video-1", "failed")
+        artifacts.wait_for_completion.assert_awaited_once_with("nb-1", "video-1")
+        assert sdk._list_raw.await_count == 2
 
 
 class TestGenerateReport:
@@ -350,10 +392,21 @@ class TestGenerateReport:
 
 
 class TestGenerateQuiz:
-    async def test_generates_quiz(self, mock_ctx, mock_client):
-        result = await generate_quiz("nb-1", "standard", "medium", mock_ctx)
+    @pytest.mark.parametrize(
+        ("quantity", "difficulty", "sdk_quantity", "sdk_difficulty"),
+        [
+            ("few", "easy", QuizQuantity.FEWER, QuizDifficulty.EASY),
+            ("standard", "medium", QuizQuantity.STANDARD, QuizDifficulty.MEDIUM),
+            ("more", "hard", QuizQuantity.MORE, QuizDifficulty.HARD),
+        ],
+    )
+    async def test_generates_quiz(self, mock_ctx, mock_client, quantity, difficulty, sdk_quantity, sdk_difficulty):
+        result = await generate_quiz("nb-1", quantity, difficulty, mock_ctx)
         assert result["status"] == "completed"
-        mock_client.artifacts.generate_quiz.assert_awaited_once()
+        assert (result["quantity"], result["difficulty"]) == (quantity, difficulty)
+        mock_client.artifacts.generate_quiz.assert_awaited_once_with(
+            "nb-1", quantity=sdk_quantity, difficulty=sdk_difficulty
+        )
 
 
 class TestGenerateFlashcards:
@@ -398,7 +451,12 @@ class TestGenerateDataTable:
     ],
 )
 async def test_failed_generation(generate, kind, mock_ctx, mock_client):
-    wait = mock_client.artifacts.wait_for_completion
+    artifacts = mock_client.artifacts
+    # Run the installed SDK's request builder with local sources and a stubbed submission.
+    sdk_generate = getattr(ArtifactsAPI, f"generate_{kind}")
+    setattr(artifacts, sdk_generate.__name__, partial(sdk_generate, artifacts, source_ids=["src-1"]))
+    artifacts._call_generate.return_value = GenerationStatus(task_id=f"task-{kind}", status="pending")
+    wait = artifacts.wait_for_completion
     wait.side_effect = None
     wait.return_value = SimpleNamespace(task_id=f"task-{kind}", status="failed", error="Generation failed")
     result = await generate("nb-1", ctx=mock_ctx)
@@ -408,10 +466,13 @@ async def test_failed_generation(generate, kind, mock_ctx, mock_client):
     assert result["error"] == "Generation failed"
 
 
-async def test_generation_rejected_before_polling(mock_ctx, mock_client):
-    mock_client.artifacts.generate_report.return_value = SimpleNamespace(task_id="", status="failed", error="Rejected")
+@pytest.mark.parametrize("task_id", ["", "task-report"])
+async def test_generation_rejected_before_polling(mock_ctx, mock_client, task_id):
+    mock_client.artifacts.generate_report.return_value = GenerationStatus(
+        task_id=task_id, status="failed", error="Rejected"
+    )
     result = await generate_report("nb-1", ctx=mock_ctx)
-    assert result == {"task_id": "", "status": "failed", "error": "Rejected"}
+    assert result == {"task_id": task_id, "status": "failed", "error": "Rejected"}
     mock_client.artifacts.wait_for_completion.assert_not_called()
 
 

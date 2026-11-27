@@ -349,7 +349,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-Tool tests are fully mocked, so the suite needs no Google account. Alongside them, `tests/test_sdk_contracts.py` uses `inspect.signature` against the real notebooklm-py SDK to verify every argument this server passes actually exists in the installed SDK -- catching renamed or removed parameters that mocks would silently accept.
+The tests run offline with synthetic notebooks and artifacts. Generation tests exercise the installed SDK's request builders and check how the tools report failed jobs. `tests/test_sdk_contracts.py` checks the SDK method signatures used by the server.
 
 ### Linting
 

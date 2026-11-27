@@ -26,10 +26,11 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.session import ServerSession
-from notebooklm import GenerationStatus, NotebookLMClient
+from notebooklm import AudioFormat, AudioLength, GenerationStatus, NotebookLMClient, QuizDifficulty, QuizQuantity
 
 ACTIVE_PROFILE_PATH = Path.home() / ".notebooklm-active.json"
 
@@ -960,7 +961,8 @@ async def get_chat_history(
 
 
 async def _finish_generation(client: NotebookLMClient, notebook_id: str, status: GenerationStatus) -> dict:
-    if status.status not in ("completed", "failed"):
+    # A completed submission can still be waiting for its media URL.
+    if status.task_id and status.status != "failed":
         status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
     result = {"task_id": status.task_id, "status": status.status}
     if status.error:
@@ -972,8 +974,8 @@ async def _finish_generation(client: NotebookLMClient, notebook_id: str, status:
 async def generate_audio_overview(
     notebook_id: str,
     instructions: str = "",
-    audio_format: str = "deep-dive",
-    length: str = "medium",
+    audio_format: Literal["deep-dive", "brief", "critique", "debate"] = "deep-dive",
+    length: Literal["short", "medium", "long"] = "medium",
     ctx: Context[ServerSession, AppContext] = None,
 ) -> dict:
     """Generate an audio overview (podcast) from notebook sources.
@@ -995,8 +997,12 @@ async def generate_audio_overview(
     await ctx.info(f"Generating audio overview: {audio_format} ({length})")
     await ctx.report_progress(0.2, 1.0, "Starting generation...")
 
+    audio_length = {"short": AudioLength.SHORT, "medium": AudioLength.DEFAULT, "long": AudioLength.LONG}[length]
     status = await client.artifacts.generate_audio(
-        notebook_id, instructions=instructions, audio_format=audio_format, audio_length=length
+        notebook_id,
+        instructions=instructions,
+        audio_format=AudioFormat[audio_format.upper().replace("-", "_")],
+        audio_length=audio_length,
     )
 
     await ctx.report_progress(0.5, 1.0, "Waiting for generation to complete...")
@@ -1034,8 +1040,8 @@ async def download_audio(notebook_id: str, output_path: str, ctx: Context[Server
 @mcp.tool()
 async def generate_quiz(
     notebook_id: str,
-    quantity: str = "standard",
-    difficulty: str = "medium",
+    quantity: Literal["few", "standard", "more"] = "standard",
+    difficulty: Literal["easy", "medium", "hard"] = "medium",
     ctx: Context[ServerSession, AppContext] = None,
 ) -> dict:
     """Generate a quiz from notebook sources.
@@ -1056,7 +1062,10 @@ async def generate_quiz(
     await ctx.info(f"Generating quiz: {difficulty} difficulty, {quantity} questions")
     await ctx.report_progress(0.3, 1.0, "Starting generation...")
 
-    status = await client.artifacts.generate_quiz(notebook_id, quantity=quantity, difficulty=difficulty)
+    quiz_quantity = {"few": QuizQuantity.FEWER, "standard": QuizQuantity.STANDARD, "more": QuizQuantity.MORE}[quantity]
+    status = await client.artifacts.generate_quiz(
+        notebook_id, quantity=quiz_quantity, difficulty=QuizDifficulty[difficulty.upper()]
+    )
 
     await ctx.report_progress(0.7, 1.0, "Waiting for completion...")
     result = await _finish_generation(client, notebook_id, status)
