@@ -6,6 +6,8 @@ expected arguments and returns a well-structured result dict.
 
 import csv
 import json
+import os
+import stat
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
@@ -664,6 +666,52 @@ class TestExportArtifact:
             await export_artifact("nb-1", "interrupted", str(path), ctx=mock_ctx)
         assert path.read_bytes() == previous
         assert list(path.parent.iterdir()) == [path]
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            b"",
+            b"%PDF-1.7\ntruncated",
+            b'<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>',
+            b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+            b"2 0 obj\n<< /Type /Pages /Count 0 /Kids [] >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n",
+        ],
+        ids=["empty", "truncated", "image", "zero-pages"],
+    )
+    async def test_corrupt_download_preserves_previous_pdf(self, mock_ctx, mock_client, tmp_path, payload):
+        path = tmp_path / "slides.pdf"
+        with fitz.open() as doc:
+            doc.new_page().insert_text((50, 50), "Original deck")
+            doc.save(path)
+        previous = path.read_bytes()
+
+        def download(notebook_id, output_path, *, artifact_id):
+            Path(output_path).write_bytes(payload)
+
+        mock_client.artifacts.get.return_value = SimpleNamespace(kind="slide_deck")
+        mock_client.artifacts.download_slide_deck.side_effect = download
+        result = await export_artifact("nb-1", "art-2", str(path), ctx=mock_ctx)
+        assert "PDF" in result["error"]
+        assert path.read_bytes() == previous
+        assert list(tmp_path.iterdir()) == [path]
+
+    @pytest.mark.skipif(os.name != "posix", reason="Requires POSIX permission bits")
+    async def test_replacement_preserves_private_mode(self, mock_ctx, mock_client, tmp_path):
+        path = tmp_path / "map.json"
+        path.write_text("{}", encoding="utf-8")
+        path.chmod(0o600)
+
+        def download(notebook_id, output_path, *, artifact_id):
+            staged = Path(output_path)
+            staged.write_text(json.dumps({"id": artifact_id}), encoding="utf-8")
+            staged.chmod(0o644)
+
+        mock_client.artifacts.get.return_value = SimpleNamespace(kind="mind_map")
+        mock_client.artifacts.download_mind_map.side_effect = download
+        result = await export_artifact("nb-1", "art-2", str(path), ctx=mock_ctx)
+        assert result == {"success": True, "output_path": str(path)}
+        assert json.loads(path.read_text(encoding="utf-8")) == {"id": "art-2"}
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
     @pytest.mark.parametrize("fmt", ["xlsx", "pdf", ""])
     async def test_unsupported_format(self, mock_ctx, mock_client, tmp_path, fmt):

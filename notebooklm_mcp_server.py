@@ -1604,6 +1604,19 @@ async def export_artifact(
     with TemporaryDirectory(dir=destination.parent) as directory:
         staged_path = Path(directory) / f"artifact.{native_format}"
         await download(notebook_id, str(staged_path), artifact_id=artifact_id)
+        if native_format == "pdf":
+            import fitz
+
+            try:
+                with fitz.open(staged_path) as deck:
+                    if not deck.is_pdf or deck.page_count < 1:
+                        return {"error": "The downloaded slide deck must be a PDF with at least one page."}
+                    deck.load_page(0)
+            except Exception as exc:
+                return {"error": f"Cannot read the downloaded slide deck as a PDF: {exc}"}
+        if os.name == "posix":
+            with suppress(FileNotFoundError):
+                staged_path.chmod(destination.stat().st_mode & 0o777)
         os.replace(staged_path, destination)
     return {"output_path": output_path, "success": True}
 
